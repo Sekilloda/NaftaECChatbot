@@ -5,3 +5,7 @@ google-generativeai
 gunicorn
 sentence_transformers
 scikit-learn
+pycryptodome
+Pillow
+pytesseract
+opencv-python

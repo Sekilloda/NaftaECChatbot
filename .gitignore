@@ -1,5 +1,11 @@
+
 #environment files with API keys
 **/.env
 #virtual environments
 **/venv
-
+# Ignore images
+**/media
+# Ignore test cases
+**/test
+# Ignore cache
+**/__pycache__
