@@ -9,3 +9,6 @@ pycryptodome
 Pillow
 pytesseract
 opencv-python
+mistralai
+langchain
+langchain-google-genai
