@@ -9,3 +9,5 @@
 **/test
 # Ignore cache
 **/__pycache__
+# Ignore internal json files
+**/*.json
