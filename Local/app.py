@@ -901,7 +901,8 @@ def responder(pregunta, k=2):
         if item["type"] == "faq":
             contexto.append(f"Pregunta frecuente: {item['question']}\nRespuesta: {item['answer']}\n")
 
-    prompt = "\n".join(contexto) + f"\n\nUsuario pregunta: {pregunta}"
+    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. \
+    Partiendo del siguiente contexto, responde a las preguntas del cliente. \n".join(contexto) + f"\n\nUsuario pregunta: {pregunta}"
     respuesta = model.generate_content(prompt).text.strip()
     return respuesta
 
