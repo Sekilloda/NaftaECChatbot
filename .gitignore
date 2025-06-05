@@ -1,0 +1,5 @@
+#environment files with API keys
+**/.env
+#virtual environments
+**/venv
+
