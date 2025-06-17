@@ -216,6 +216,11 @@ faqs = [
         "type": "faq",
         "question": "Muchas gracias, qué hago ahora? Está mi registro completo? Eso es todo",
         "answer": "Si has recibido tu código y se ha validado con tu comprobante, el proceso está listo. Bienvenido a la familia Nafta!"
+    },
+    {
+        "type": "faq",
+        "question": "Hola, quiero información. Hola, buenas tardes, buenos días, buenas noches. Hola, info",
+        "answer": "Hola! Soy el asistente virtual de NaftaEC, estoy disponible para ayudarte con tus requerimientos."
     }
 ]
 
@@ -237,7 +242,7 @@ def responder(pregunta, k=2):
         if item["type"] == "faq":
             contexto.append(f"Pregunta frecuente: {item['question']}\nRespuesta: {item['answer']}\n")
 
-    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes, preséntate como tal si el cliente te saluda. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que ya tiene su código, despídete cordialmente. Partiendo únicamente del siguiente contexto, responde a las preguntas o necesidades de información del cliente, si no tienes respuestas claras no las des. \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
+    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que ya tiene su código, despídete cordialmente. Partiendo únicamente del siguiente contexto, responde a las preguntas o necesidades de información del cliente, si no tienes respuestas claras no las des. \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
     respuesta = model.generate_content(prompt).text.strip()
     return respuesta
 
@@ -616,7 +621,7 @@ def run_mistral_ocr_pipeline(image_path: str):
         # Assuming client.ocr.process is the correct method based on the notebook.
         # This is a key point that might need adjustment if the SDK has a different structure.
         ocr_response = client.ocr.process(
-            model="mistral-ocr-latest", # This model name might need verification
+            model="mistral-ocr-2503", # This model name might need verification
             document={
                 "type": "image_url", 
                 "image_url": f"data:image/jpeg;base64,{base64_image}"

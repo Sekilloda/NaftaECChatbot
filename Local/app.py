@@ -164,6 +164,11 @@ faqs = [
         "type": "faq",
         "question": "Muchas gracias, qué hago ahora? Está mi registro completo? Eso es todo",
         "answer": "Si has recibido tu código y se ha validado con tu comprobante, el proceso está listo. Bienvenido a la familia Nafta!"
+    },
+    {
+        "type": "faq",
+        "question": "Hola, quiero información. Hola, buenas tardes, buenos días, buenas noches. Hola, info",
+        "answer": "Hola! Soy el asistente virtual de NaftaEC, estoy disponible para ayudarte con tus requerimientos."
     }
 ]
 
