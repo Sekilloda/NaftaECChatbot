@@ -1,0 +1,14 @@
+flask
+python-dotenv
+requests
+google-generativeai
+waitress
+sentence_transformers
+scikit-learn
+pycryptodome
+Pillow
+pytesseract
+opencv-python
+mistralai
+langchain
+langchain-google-genai
