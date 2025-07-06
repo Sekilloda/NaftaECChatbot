@@ -1,3 +1,4 @@
+#needs python 3.13.5
 flask
 python-dotenv
 requests

@@ -1,3 +1,4 @@
+- Make an account in ngrok
 - Download ngrok and add authtoken as per https://dashboard.ngrok.com/get-started/setup/windows
 - Run ngrok, then in the CMD window that opens run "ngrok http --url=discrete-physically-colt.ngrok-free.app 5001"
 - Install python 3.13.5 
