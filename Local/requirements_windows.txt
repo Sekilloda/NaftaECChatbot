@@ -11,5 +11,7 @@ Pillow
 pytesseract
 opencv-python
 mistralai
+pandas
+openpyxl
 langchain
 langchain-google-genai

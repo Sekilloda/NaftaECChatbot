@@ -12,6 +12,8 @@ pycryptodome
 Pillow
 pytesseract
 opencv-python
+pandas
+openpyxl
 mistralai
 langchain
 langchain-google-genai
