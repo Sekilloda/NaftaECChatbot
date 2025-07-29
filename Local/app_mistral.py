@@ -23,7 +23,7 @@ from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
 from Crypto.Protocol.KDF import HKDF
 from Crypto.Util.Padding import unpad
-
+import pandas as pd
 # Mistral and Langchain related imports
 from mistralai import Mistral # Using Mistral directly as per notebook
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -161,6 +161,8 @@ def preprocess_image(cv_image, params, output_dir=None, base_filename=None): # o
     
     return processed_image
 
+
+'''
 faqs = [
     {
         "type": "faq",
@@ -224,8 +226,19 @@ faqs = [
     }
 ]
 
-documentos = faqs
+'''
+
+
+df = pd.read_excel("faqs.xlsx")  
+
+documentos = df.to_dict(orient="records")
+
 descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
+
+
+
+#documentos = faqs
+#descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
 
 # Carga modelo de embeddings
 embedder = SentenceTransformer("all-MiniLM-L6-v2")

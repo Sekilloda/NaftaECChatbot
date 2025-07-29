@@ -109,6 +109,7 @@ def preprocess_image(cv_image, params, output_dir=None, base_filename=None): # o
     
     return processed_image
 
+'''
 faqs = [
     {
         "type": "faq",
@@ -173,6 +174,10 @@ faqs = [
 ]
 
 documentos = faqs
+'''
+
+documentos = df.to_dict(orient="records")
+
 descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
 
 # Carga modelo de embeddings
@@ -711,6 +716,8 @@ from Crypto.Hash import HMAC, SHA256
 from Crypto.Protocol.KDF import HKDF
 from Crypto.Util.Padding import unpad
 
+import pandas as pd
+
 # Load environment variables
 load_dotenv()
 
@@ -840,6 +847,7 @@ def preprocess_image(cv_image, params, output_dir=None, base_filename=None): # o
     
     return processed_image
 
+'''
 faqs = [
     {
         "type": "faq",
@@ -892,8 +900,14 @@ faqs = [
         "answer": "Hola. En el concesionario Nissan Renault ubicado a una cuadra del Supermaxi, sector norte de la ciudad, de 13h00 a 18h00"
     }
 ]
+documentos = df.to_dict(orient="records")
 
-documentos = faqs
+'''
+
+df = pd.read_excel("faqs.xlsx")  
+
+documentos = df.to_dict(orient="records")
+
 descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
 
 # Carga modelo de embeddings
