@@ -190,7 +190,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Setup Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash") # MODIFICADO para usar un modelo más potente
+model = genai.GenerativeModel("gemini-2.5-flash-lite") # MODIFICADO para usar un modelo más potente
 
 DEFAULT_PARAMS = {
     'clahe_clip_limit': '2.0',
