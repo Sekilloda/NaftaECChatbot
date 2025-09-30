@@ -371,16 +371,16 @@ faqs = [
 ]
 
 
-#df = pd.read_excel("faqs.xlsx") 
+df = pd.read_excel("faqs.xlsx") 
 
-#documentos = df.to_dict(orient="records")
+documentos = df.to_dict(orient="records")
 
-#descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
-
-
-
-documentos = faqs
 descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
+
+
+
+#documentos = faqs
+#descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
 
 # Carga modelo de embeddings
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
