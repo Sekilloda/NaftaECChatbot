@@ -397,7 +397,7 @@ def responder(pregunta, k=2):
         if item["type"] == "faq":
             contexto.append(f"Pregunta frecuente: {item['question']}\nRespuesta: {item['answer']}\n")
 
-    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. A veces tendrás contexto de la conversacion, entonces usa esos datos para ayudarte. Puedes compartir los datos que te hayan dado en forma de contexto con el usuario que te los dio. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que no necesita mas ayuda despidete y dile que proximamente le enviaran su codigo. Primero parte del siguiente contexto, sino usa la información dada por el usuario para ayudarte en las respuestas, sino hay de ningun lado entonces pide información adicional. \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
+    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. A veces tendrás contexto de la conversacion, entonces usa esos datos para ayudarte. Puedes compartir los datos que te hayan dado en forma de contexto con el usuario que te los dio. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que no necesita mas ayuda despidete y dile que proximamente le enviaran su codigo. Primero parte del siguiente contexto, sino usa la información dada por el usuario para ayudarte en las respuestas, sino hay de ningun lado entonces pide información adicional. No te inventes nada que este fuera de los contextos   . \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
     respuesta = model.generate_content(prompt).text.strip()
     return respuesta
 
