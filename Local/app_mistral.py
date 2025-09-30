@@ -34,7 +34,152 @@ from langchain.prompts import ChatPromptTemplate
 # Load environment variables
 load_dotenv()
 
+
+
 app = Flask(__name__)
+
+
+# --- SQLite: persistencia de conversaciones ------------------------------
+import sqlite3
+DB_PATH = "chat_history.db"
+
+# Conexión global (check_same_thread=False porque Flask puede usar hilos)
+_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+_cursor = _conn.cursor()
+
+# Crear tabla si no existe
+_cursor.execute("""
+CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+""")
+_conn.commit()
+
+def canonicalize_jid(jid: str) -> str:
+    """
+    Normaliza los identificadores para que en la DB usemos siempre la misma forma.
+    - Si ya contiene '@' se deja tal cual (ej: '573001112233@s.whatsapp.net' o 'whatsapp:+57300...')
+    - Si no contiene '@' asumimos número y añadimos '@s.whatsapp.net'
+    """
+    if not jid:
+        return jid
+    jid = jid.strip()
+    # Mantener formatos tipo 'whatsapp:+57...' o que ya contengan domain
+    if jid.startswith("whatsapp:") or "@" in jid:
+        return jid
+    return f"{jid}@s.whatsapp.net"
+
+def save_message(user_id: str, role: str, content: str):
+    """Guarda un mensaje (user/assistant) en la base de datos. No lanza excepción si falla."""
+    try:
+        user_id_norm = canonicalize_jid(user_id)
+        _cursor.execute(
+            "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id_norm, role, content)
+        )
+        _conn.commit()
+    except Exception as e:
+        print(f"[DB] Error guardando mensaje para {user_id}: {e}")
+
+def get_last_messages(user_id: str, limit: int = 5):
+    """Devuelve los últimos 'limit' mensajes CRONOLÓGICOS (del más antiguo al más reciente)."""
+    try:
+        user_id_norm = canonicalize_jid(user_id)
+        _cursor.execute(
+            "SELECT role, content, created_at FROM conversations WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (user_id_norm, limit)
+        )
+        rows = _cursor.fetchall()
+        # devolver en orden cronológico (más antiguo primero)
+        return rows[::-1]
+    except Exception as e:
+        print(f"[DB] Error leyendo historial para {user_id}: {e}")
+        return []
+# ------------------------------------------------------------------------
+
+
+# ------------------ Funciones para leer historial y construir contexto ------------------
+
+def fetch_last_messages_from_db(user_id: str, limit: int = 5):
+    """
+    Lee los últimos 'limit' mensajes del usuario desde la tabla 'conversations'.
+    Devuelve una lista de dicts con keys: 'role', 'content', 'created_at'.
+    El orden devuelto es cronológico: del más antiguo al más reciente.
+    """
+    try:
+        if not user_id:
+            return []
+
+        user_norm = canonicalize_jid(user_id)
+
+        # Intentamos usar el cursor global (_cursor). Si no existe, abrimos conexión local.
+        try:
+            cur = _cursor
+            conn_local = _conn
+        except NameError:
+            # Fallback si la variable global no existe por alguna razón
+            conn_local = sqlite3.connect(DB_PATH, check_same_thread=False)
+            cur = conn_local.cursor()
+
+        cur.execute(
+            "SELECT role, content, created_at FROM conversations WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (user_norm, limit)
+        )
+        rows = cur.fetchall()
+        # rows están en orden DESC por created_at — invertimos para entregar cronológico ASC
+        rows = rows[::-1]
+        result = [{"role": r[0], "content": r[1], "created_at": r[2]} for r in rows]
+
+        # Si abrimos conexión local en fallback, cerramos cursor/conn
+        try:
+            if conn_local is not _conn:
+                cur.close()
+                conn_local.close()
+        except Exception:
+            pass
+
+        return result
+    except Exception as e:
+        print(f"[DB] Error en fetch_last_messages_from_db para {user_id}: {e}")
+        return []
+
+def build_context_from_db(user_id: str, limit: int = 6, include_system: bool = False):
+    """
+    Construye un string contexto con los últimos mensajes para enviar al LLM.
+    - include_system: si True incluye eventos 'system' (ej. recibo de message_id)
+    Formato de salida (ejemplo):
+        Usuario: Hola, quiero inscribirme
+        Asistente: Claro, ¿tienes tu comprobante?
+        Usuario: Sí, lo envío ahora
+    """
+    rows = fetch_last_messages_from_db(user_id, limit=limit)
+    if not rows:
+        return ""
+
+    lines = []
+    for entry in rows:
+        role = entry.get("role", "").lower()
+        content = entry.get("content", "") or ""
+        if role == "user":
+            label = "Usuario"
+        elif role == "assistant":
+            label = "Asistente"
+        elif role == "system":
+            if not include_system:
+                continue
+            label = "Sistema"
+        else:
+            label = role.capitalize()
+        # Normalizar newlines para que el prompt no quede roto
+        content_clean = content.replace("\r\n", "\n").strip()
+        lines.append(f"{label}: {content_clean}")
+    return "\n".join(lines)
+
+
 
 #pending_confirmations = {} # Replaced by file-based state management
 
@@ -45,7 +190,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # Setup Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+model = genai.GenerativeModel("gemini-2.0-flash") # MODIFICADO para usar un modelo más potente
 
 DEFAULT_PARAMS = {
     'clahe_clip_limit': '2.0',
@@ -162,7 +307,6 @@ def preprocess_image(cv_image, params, output_dir=None, base_filename=None): # o
     return processed_image
 
 
-'''
 faqs = [
     {
         "type": "faq",
@@ -226,19 +370,17 @@ faqs = [
     }
 ]
 
-'''
 
+#df = pd.read_excel("faqs.xlsx") 
 
-df = pd.read_excel("faqs.xlsx")  
+#documentos = df.to_dict(orient="records")
 
-documentos = df.to_dict(orient="records")
-
-descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
-
-
-
-#documentos = faqs
 #descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
+
+
+
+documentos = faqs
+descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
 
 # Carga modelo de embeddings
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
@@ -255,7 +397,7 @@ def responder(pregunta, k=2):
         if item["type"] == "faq":
             contexto.append(f"Pregunta frecuente: {item['question']}\nRespuesta: {item['answer']}\n")
 
-    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que ya tiene su código, despídete cordialmente. Partiendo únicamente del siguiente contexto, responde a las preguntas o necesidades de información del cliente, si no tienes respuestas claras no las des. \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
+    prompt = "Eres un asistente que le permite a la empresa de carreras NaftaEc comunicarse de manera efectiva con sus clientes. A veces tendrás contexto de la conversacion, entonces usa esos datos para ayudarte. Puedes compartir los datos que te hayan dado en forma de contexto con el usuario que te los dio. Tienes la misión de resolver dudas y enganchar. Si el usuario dice que no necesita mas ayuda despidete y dile que proximamente le enviaran su codigo. Primero parte del siguiente contexto, sino usa la información dada por el usuario para ayudarte en las respuestas, sino hay de ningun lado entonces pide información adicional. \n".join(contexto) + f"\n\nUsuario se comunica con la siguiente pregunta o mensaje: {pregunta}"
     respuesta = model.generate_content(prompt).text.strip()
     return respuesta
 
@@ -307,7 +449,7 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         # However, some sources say IV is first 16 of encrypted_data, and HKDF is for cipher+mac key (total 64 derived)
         # Let's assume media_key is 32 bytes, and we derive a longer key from it for IV, Cipher, MAC.
         # If media_key is 64 bytes (key + mac_key_material), then HKDF is used differently.
-        # The PHP example implies mediaKey is THE key. Let's assume it's the master secret.        # The common pattern is that the mediaKey (32 bytes) is expanded.
+        # The PHP example implies mediaKey is THE key. Let's assume it's the master secret.       # The common pattern is that the mediaKey (32 bytes) is expanded.
         # If media_key is 32 bytes (IKM):
         #   derived_key = HKDF(master=media_key, key_len=80, salt=None, hashmod=SHA256, context=app_info)
         #   iv = derived_key[0:16]
@@ -390,19 +532,28 @@ def webhook():
         if data.get("event") != "messages.upsert":
             return jsonify({"status": "ignored", "reason": "wrong_event_type"})
 
-        message_container = data.get("data", {}).get("messages", {})
+        message_container = data.get("data", {}).get("messages")
         if not message_container:
-            message_container = data.get("data", {}).get("message", {})
+            message_container = data.get("data", {}).get("message")
 
         if not message_container:
             print(f"No 'messages' or 'message' field found in data.get('data', {{}}). Received data: {json.dumps(data, indent=2)}")
-            return jsonify({"status": "no_message_data_container"})
+            return {"status": "no_message_data_container"}
+
+        # Si messages es lista, tomar el primer elemento
+        if isinstance(message_container, list):
+            if not message_container:
+                return {"status": "empty_messages_list"}
+            message_container = message_container[0]
+
 
         if message_container.get("key", {}).get("fromMe"):
             return jsonify({"status": "self_message_skipped"})
 
         sender = message_container.get("key", {}).get("remoteJid")
         message_id = message_container.get("key", {}).get("id", "unknown")
+
+        save_message(sender, "system", f"received_message_id:{message_id}")
 
         msg_content = message_container.get("message", {})
         if not msg_content and message_container:
@@ -457,6 +608,7 @@ def webhook():
                     decryption_successful = decrypt_and_save_media(media_key, encrypted_data, output_path, media_type)
                     if decryption_successful:
                         print(f"Media decrypted and saved successfully: {output_path}")
+                        save_message(sender, "user", f"[media:{media_type}] {output_path}")
                         if media_type == 'image':
                             # Handle user sending a new image while another is pending confirmation
                             old_confirmation_data = get_pending_confirmation(sender)
@@ -474,7 +626,8 @@ def webhook():
                             new_confirmation_data = {
                                 "message_id": message_id, # This is the new image's message_id
                                 "output_path": output_path,
-                                "original_filename": output_filename # output_filename is f'{message_id}{extension}'
+                                "original_filename": output_filename, # output_filename is f'{message_id}{extension}'
+                                "state": "awaiting_image_confirmation" # INICIO DEL NUEVO ESTADO
                             }
                             save_pending_confirmation(sender, new_confirmation_data)
                             confirmation_question = "¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?"
@@ -500,98 +653,182 @@ def webhook():
         elif "extendedTextMessage" in msg_content:
             incoming_text = msg_content["extendedTextMessage"].get("text")
 
+        if incoming_text:
+            save_message(sender, "user", incoming_text)
+
         if not incoming_text:
             print(f"Unsupported message type for id {message_id}. msg_content: {json.dumps(msg_content, indent=2)}")
             return jsonify({"status": "unsupported_message_type", "id": message_id})
 
         # Check if this sender has a pending confirmation
-        image_details = get_pending_confirmation(sender)
-        if image_details:
-            # This is potentially a response to the confirmation question
-            # image_info = pending_confirmations[sender] # Old way, now image_details is used
-
-            # Refined Gemini Prompt
-            prompt_text = (
-                f"Analiza el siguiente mensaje del usuario: '{incoming_text}'. "
-                f"El usuario está respondiendo a la pregunta: '¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?'. "
-                f"Tu tarea es clasificar la respuesta del usuario. Responde ÚNICAMENTE con UNA de las siguientes tres palabras: AFFIRMATIVE, NEGATIVE, o UNCLEAR. "
-                f"No añadas ninguna explicación ni puntuación adicional."
-            )
+        pending_details = get_pending_confirmation(sender)
+        if pending_details:
             
-            raw_classification = "error_gemini" # Default in case of exception
-            try:
-                gemini_classification_response = model.generate_content(prompt_text)
-                raw_classification = gemini_classification_response.text.strip()
-            except Exception as gen_err:
-                print(f"Error generating content with Gemini for classification: {gen_err}")
-                # raw_classification remains "error_gemini"
-            
-            processed_classification = raw_classification.lower()
+            # --- NUEVO BLOQUE: MANEJO DE CONFIRMACIÓN DE DATOS OCR ---
+            if pending_details.get("state") == "awaiting_data_confirmation":
+                print(f"User {sender} is responding to data confirmation. Message: '{incoming_text}'")
+                prompt_text = (
+                    f"Analiza la siguiente respuesta del usuario: '{incoming_text}'. "
+                    f"El usuario está respondiendo a la pregunta de si los datos que extrajimos de su recibo son correctos. "
+                    f"Tu tarea es clasificar su respuesta. Responde ÚNICAMENTE con UNA de las siguientes tres palabras: AFFIRMATIVE, NEGATIVE, o UNCLEAR. "
+                    f"No añadas ninguna explicación ni puntuación."
+                )
+                try:
+                    gemini_response = model.generate_content(prompt_text)
+                    classification = gemini_response.text.strip().lower()
+                except Exception as e:
+                    print(f"Error classifying data confirmation response: {e}")
+                    classification = "unclear"
 
-            print(f"Sender: {sender}, Incoming Text: \"{incoming_text}\", Raw Gemini Classification: \"{raw_classification}\", Processed Classification: \"{processed_classification}\"")
-            
-            # image_details = pending_confirmations[sender] # Old way, already fetched as image_details
-
-            if processed_classification == 'affirmative':
-                print(f"User {sender} confirmed (AFFIRMATIVE). Processing OCR for image: {image_details['output_path']}")
-                ocr_success = process_receipt_image(image_details['output_path'], image_details['original_filename'])
+                if classification == 'affirmative':
+                    goodbye_message = "¡Perfecto! Hemos confirmado tus datos. Pronto recibirás tu código de inscripción. ¡Gracias por unirte a NaftaEC!"
+                    send_whatsapp_message(sender, goodbye_message)
+                    clear_pending_confirmation(sender) # Fin del flujo
+                    return jsonify({'status': 'data_confirmed_conversation_ended', 'id': pending_details['message_id']})
                 
-                if ocr_success:
-                    txt_filename = os.path.splitext(image_details['original_filename'])[0] + ".txt"
-                    # image_details['output_path'] is like 'media/xyz.jpg'
-                    # original_filename is like 'xyz.jpg'
-                    # txt_filepath should be 'media/xyz.txt'
-                    txt_filepath = os.path.join(os.path.dirname(image_details['output_path']), txt_filename)
+                elif classification == 'negative':
+                    request_correction_message = "Entendido. Por favor, ¿podrías indicarme los datos correctos o enviar una imagen más clara del comprobante para corregirlos?"
+                    send_whatsapp_message(sender, request_correction_message)
+                    clear_pending_confirmation(sender) # Reiniciar el flujo
+                    return jsonify({'status': 'data_denied_restarting_flow', 'id': pending_details['message_id']})
+
+                else: # Unclear
+                    clarification_message = "No entendí bien tu respuesta. ¿Son los datos que te mostré correctos? Por favor, responde con 'sí' o 'no'."
+                    send_whatsapp_message(sender, clarification_message)
+                    # No borramos el estado, el usuario puede volver a intentar
+                    return jsonify({'status': 'data_confirmation_unclear', 'id': pending_details['message_id']})
+
+            # --- LÓGICA ORIGINAL MODIFICADA: MANEJO DE CONFIRMACIÓN DE IMAGEN ---
+            elif pending_details.get("state") == "awaiting_image_confirmation":
+                prompt_text = (
+                    f"Analiza el siguiente mensaje del usuario: '{incoming_text}'. "
+                    f"El usuario está respondiendo a la pregunta: '¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?'. "
+                    f"Tu tarea es clasificar la respuesta del usuario. Responde ÚNICAMENTE con UNA de las siguientes tres palabras: AFFIRMATIVE, NEGATIVE, o UNCLEAR. "
+                    f"No añadas ninguna explicación ni puntuación adicional."
+                )
+                
+                raw_classification = "error_gemini" # Default in case of exception
+                try:
+                    gemini_classification_response = model.generate_content(prompt_text)
+                    raw_classification = gemini_classification_response.text.strip()
+                except Exception as gen_err:
+                    print(f"Error generating content with Gemini for classification: {gen_err}")
+                
+                processed_classification = raw_classification.lower()
+
+                print(f"Sender: {sender}, Incoming Text: \"{incoming_text}\", Raw Gemini Classification: \"{raw_classification}\", Processed Classification: \"{processed_classification}\"")
+                
+                if processed_classification == 'affirmative':
+                    print(f"User {sender} confirmed (AFFIRMATIVE). Processing OCR for image: {pending_details['output_path']}")
+                    ocr_success = process_receipt_image(pending_details['output_path'], pending_details['original_filename'])
                     
-                    try:
-                        with open(txt_filepath, 'r', encoding='utf-8') as f:
-                            receipt_content = f.read()
-                        send_whatsapp_message(sender, receipt_content)
-                        print(f"Sent OCR results to {sender} for image {image_details['original_filename']}")
+                    if ocr_success:
+                        txt_filename = os.path.splitext(pending_details['original_filename'])[0] + ".txt"
+                        txt_filepath = os.path.join(os.path.dirname(pending_details['output_path']), txt_filename)
+                        
+                        try:
+                            with open(txt_filepath, 'r', encoding='utf-8') as f:
+                                receipt_content = f.read()
+                            
+                            # --- MODIFICACIÓN PRINCIPAL ---
+                            # No enviamos el contenido directamente, lo usamos en un prompt para el LLM
+                            
+                            # 1. Crear el prompt para que el LLM pida la confirmación de los datos
+                            prompt_for_data_confirmation = (
+                                f"Eres un asistente de NaftaEC. Acabas de procesar un recibo de pago para un usuario. "
+                                f"Los datos extraídos son:\n\n{receipt_content}\n\n"
+                                f"Tu tarea es presentarle esta información al usuario de forma clara y amigable, y luego preguntarle explícitamente si los datos son correctos. "
+                                f"Termina tu mensaje con una pregunta clara como '¿Son correctos estos datos?'."
+                            )
+
+                            # 2. Generar la respuesta del LLM
+                            confirmation_request_message = model.generate_content(prompt_for_data_confirmation).text.strip()
+                            
+                            # 3. Enviar el mensaje generado al usuario
+                            send_whatsapp_message(sender, confirmation_request_message)
+                            
+                            # 4. Actualizar el estado para esperar la confirmación de los datos
+                            pending_details['state'] = 'awaiting_data_confirmation'
+                            pending_details['ocr_data'] = receipt_content # Guardamos los datos por si se necesitan
+                            save_pending_confirmation(sender, pending_details)
+
+                            print(f"Sent OCR data confirmation request to {sender} for image {pending_details['original_filename']}")
+                            return jsonify({'status': 'ocr_processed_awaiting_data_confirmation', 'id': pending_details['message_id']})
+
+                        except Exception as e_read:
+                            print(f"Error reading OCR output file {txt_filepath}: {e_read}")
+                            send_whatsapp_message(sender, "Lo siento, hubo un error al leer el resultado del recibo.")
+                            clear_pending_confirmation(sender)
+                            return jsonify({'status': 'ocr_processed_file_read_error', 'id': pending_details['message_id']})
+                    else:
+                        print(f"OCR processing failed for {pending_details['original_filename']} for sender {sender}")
+                        send_whatsapp_message(sender, "Lo siento, no pude procesar la imagen del recibo.")
                         clear_pending_confirmation(sender)
-                        return jsonify({'status': 'ocr_processed_and_sent', 'id': image_details['message_id']})
-                    except FileNotFoundError:
-                        print(f"Error: OCR output file {txt_filepath} not found, though ocr_success was true.")
-                        send_whatsapp_message(sender, "Lo siento, hubo un error al leer el resultado del recibo.")
-                        clear_pending_confirmation(sender)
-                        return jsonify({'status': 'ocr_processed_file_read_error', 'id': image_details['message_id']})
-                    except Exception as e_read:
-                        print(f"Error reading OCR output file {txt_filepath}: {e_read}")
-                        send_whatsapp_message(sender, "Lo siento, hubo un error al leer el resultado del recibo.")
-                        clear_pending_confirmation(sender)
-                        return jsonify({'status': 'ocr_processed_file_read_error', 'id': image_details['message_id']})
-                else:
-                    print(f"OCR processing failed for {image_details['original_filename']} for sender {sender}")
-                    send_whatsapp_message(sender, "Lo siento, no pude procesar la imagen del recibo.")
+                        return jsonify({'status': 'ocr_processing_failed', 'id': pending_details['message_id']})
+                
+                elif processed_classification == 'negative':
+                    print(f"User {sender} denied confirmation (NEGATIVE) for image {pending_details['original_filename']}")
+                    send_whatsapp_message(sender, "Entendido. Si la imagen no era un recibo, no la procesaré. Puede enviar otra imagen si lo desea o hacerme una pregunta.")
                     clear_pending_confirmation(sender)
-                    return jsonify({'status': 'ocr_processing_failed', 'id': image_details['message_id']})
-            
-            elif processed_classification == 'negative':
-                print(f"User {sender} denied confirmation (NEGATIVE) for image {image_details['original_filename']}")
-                send_whatsapp_message(sender, "Entendido. Si la imagen no era un recibo, no la procesaré. Puede enviar otra imagen si lo desea o hacerme una pregunta.")
-                clear_pending_confirmation(sender)
-                return jsonify({'status': 'ocr_cancelled_by_user', 'id': image_details['message_id']})
-            
-            else: # Covers 'unclear', 'error_gemini', or any other unexpected/malformed response from Gemini
-                print(f"Confirmation unclear from {sender} for image {image_details['original_filename']}. Processed Classification: {processed_classification}")
-                send_whatsapp_message(sender, "No entendí tu respuesta. Por favor, responde 'sí' o 'no' para el recibo anterior, o envía un nuevo mensaje si quieres que ignore la imagen.")
-                # Entry NOT removed from pending_confirmations, user can try again.
-                return jsonify({'status': 'confirmation_unclear', 'id': image_details['message_id']})
+                    return jsonify({'status': 'ocr_cancelled_by_user', 'id': pending_details['message_id']})
+                
+                else: # Covers 'unclear', 'error_gemini', or any other unexpected/malformed response from Gemini
+                    print(f"Confirmation unclear from {sender} for image {pending_details['original_filename']}. Processed Classification: {processed_classification}")
+                    send_whatsapp_message(sender, "No entendí tu respuesta. Por favor, responde 'sí' o 'no' para el recibo anterior, o envía un nuevo mensaje si quieres que ignore la imagen.")
+                    # Entry NOT removed from pending_confirmations, user can try again.
+                    return jsonify({'status': 'confirmation_unclear', 'id': pending_details['message_id']})
         
         else:
-            # No pending confirmation, process as a general question
-            gemini_response = responder(incoming_text)
-            send_whatsapp_message(sender, gemini_response)
-            return jsonify({"status": "text_message_processed", "id": message_id})
+            # No pending confirmation, process as a general question (AHORA con contexto desde DB)
+            # 1) Construir contexto
+            context_str = build_context_from_db(sender, limit=20)  # ajusta limit si quieres más o menos turnos
+            if context_str:
+                # Cabecera breve para el LLM + historial + último mensaje
+                prompt_to_llm = (
+                    "Eres un asistente que ayuda a la empresa NaftaEc. Usa el siguiente historial de conversación para entender el contexto y luego responde al último mensaje:\n\n"
+                    f"{context_str}\n\n"
+                    f"Usuario (último mensaje): {incoming_text}"
+                )
+            else:
+                prompt_to_llm = incoming_text or ""
+
+            # 2) Llamar a tu wrapper / función que genera la respuesta
+            try:
+                gemini_response = responder(prompt_to_llm)
+                # Asegurarnos de que gemini_response sea un string
+                answer_text = gemini_response if isinstance(gemini_response, str) else (getattr(gemini_response, "text", "") or str(gemini_response))
+            except Exception as e:
+                print(f"[LLM] Error generando respuesta con contexto: {e}")
+                answer_text = "Lo siento, ocurrió un error al generar la respuesta."
+
+            # 3) Guardar respuesta del asistente y enviar por WaSender
+            save_message(sender, "assistant", answer_text)
+            send_whatsapp_message(sender, answer_text)
+            return jsonify({"status": "text_message_processed_with_context", "id": message_id})
+
 
     except Exception as e:
         print(f"Error in webhook: {str(e)}\nTraceback: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 def send_whatsapp_message(recipient, text):
+    """
+    Envía el mensaje y además lo persiste en SQLite como 'assistant'.
+    Mantiene la compatibilidad con los formatos de recipient que uses.
+    """
+    # canonicalizamos el recipient para la DB (pero respetamos el formato que usa la API)
+    recipient_for_db = recipient
     if "@s.whatsapp.net" in recipient:
-        recipient = recipient.split("@")[0]
-    payload = {"to": recipient, "text": text}
+        # la API original espera solo el número o a veces el formato sin domain;
+        # guardamos en DB con domain para coherencia
+        recipient_for_db = canonicalize_jid(recipient)
+        # para la petición HTTP original, convertir a forma numérica
+        recipient_payload = recipient.split("@")[0]
+    else:
+        recipient_for_db = canonicalize_jid(recipient)
+        recipient_payload = recipient  # si ya es 'whatsapp:+57...' o '57300...'
+
+    payload = {"to": recipient_payload, "text": text}
     headers = {
         "Authorization": f"Bearer {WASENDER_API_TOKEN}",
         "Content-Type": "application/json"
@@ -599,10 +836,21 @@ def send_whatsapp_message(recipient, text):
     try:
         response = requests.post(WASENDER_API_URL, json=payload, headers=headers, timeout=10)
         print(f"WaSender response: {response.status_code} {response.text}")
+        # Guardamos lo enviado por el asistente en la DB (aunque el envío falle, nos interesa el registro)
+        try:
+            save_message(recipient_for_db, "assistant", text)
+        except Exception as e:
+            print(f"[DB] Error guardando mensaje enviado: {e}")
         return response.ok
     except requests.exceptions.RequestException as e:
         print(f"Error sending message via WaSender: {e}")
+        # Aun en fallo, intentamos guardar el mensaje para auditoría
+        try:
+            save_message(recipient_for_db, "assistant", f"[FAILED_TO_SEND] {text}")
+        except Exception as e2:
+            print(f"[DB] Error guardando mensaje de fallo: {e2}")
         return False
+
 
 # Mistral OCR Pipeline functions
 def encode_image_to_base64(image_path):
@@ -644,7 +892,7 @@ def run_mistral_ocr_pipeline(image_path: str):
         
         # Validate response structure (this is also based on notebook assumptions)
         if not hasattr(ocr_response, 'pages') or not ocr_response.pages or \
-           not hasattr(ocr_response.pages[0], 'markdown') or not ocr_response.pages[0].markdown:
+            not hasattr(ocr_response.pages[0], 'markdown') or not ocr_response.pages[0].markdown:
             print("Error [MISTRAL_OCR]: Mistral OCR returned no content or unexpected response structure.")
             # print(f"Full Mistral OCR response for debugging: {ocr_response}") # Potentially large
             return None
@@ -660,7 +908,7 @@ def run_mistral_ocr_pipeline(image_path: str):
 
     # Langchain with Gemini for structured data extraction
     try:
-        gemini_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0) # GEMINI_API_KEY is used by library
+        gemini_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0) # GEMINI_API_KEY is used by library
 
         response_schemas = [
             ResponseSchema(name="banco", description="Nombre del banco emisor del comprobante. Si no se encuentra, N/A."),
@@ -712,10 +960,10 @@ import re # Ensure re is imported
 from PIL import Image # Ensure Image is imported
 
 import os       # Should be already imported
-import re       # Should be already imported
+import re      # Should be already imported
 from PIL import Image # Should be already imported
 import pytesseract # Should be already imported
-import cv2      # Should be already imported
+import cv2     # Should be already imported
 import numpy as np  # Should be already imported
 
 def process_receipt_image(image_path: str, original_filename: str) -> bool:
@@ -724,7 +972,7 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
     # Load OCR parameters
     # Assuming ocr_params.txt is in the 'Local' directory, relative to where app.py is (which is also Local/)
     # If app.py is moved, this path might need adjustment or be made absolute/configurable.
-    params_file_path = os.path.join(os.path.dirname(__file__), "ocr_params.txt")
+    params_file_path = "ocr_params.txt"
     params = load_params(params_file_path)
 
     try:
@@ -773,7 +1021,7 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
         
         if not banco_found_on_line:
             # Fallback: search for known bank names in the whole text if not found on a "BANCO" line
-            known_banks_pattern = r"(?i)(Pichincha|Produbanco|Guayaquil|Pacífico|Bolivariano|Internacional)"
+            known_banks_pattern = r"(?i)\b(Pichincha|Produbanco|Guayaquil|Pacífico|Bolivariano|Internacional)\b"
             bank_keyword_match = re.search(known_banks_pattern, raw_text)
             if bank_keyword_match:
                 banco = bank_keyword_match.group(1).strip()
@@ -895,5 +1143,299 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
         print(traceback.format_exc())
         return False
 
+def handle_webhook_data(data):
+    """
+    Función para manejar datos de webhook que puede ser llamada directamente
+    desde el simulador sin necesidad del framework Flask
+    """
+    try:
+        if data.get("event") != "messages.upsert":
+            return {"status": "ignored", "reason": "wrong_event_type"}
+
+        message_container = data.get("data", {}).get("messages", {})
+        if not message_container:
+            message_container = data.get("data", {}).get("message", {})
+
+        if not message_container:
+            print(f"No 'messages' or 'message' field found in data.get('data', {{}}). Received data: {json.dumps(data, indent=2)}")
+            return {"status": "no_message_data_container"}
+
+        # CORRECCIÓN: Si message_container es una lista, tomar el primer elemento
+        if isinstance(message_container, list):
+            if not message_container:
+                return {"status": "empty_messages_list"}
+            message_container = message_container[0]
+
+        if message_container.get("key", {}).get("fromMe"):
+            return {"status": "self_message_skipped"}
+
+        sender = message_container.get("key", {}).get("remoteJid")
+        message_id = message_container.get("key", {}).get("id", "unknown")
+
+        save_message(sender, "system", f"received_message_id:{message_id}")
+
+        msg_content = message_container.get("message", {})
+        if not msg_content and message_container:
+            is_potential_content_node = any(k in message_container for k in ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'conversation', 'extendedTextMessage'])
+            if is_potential_content_node:
+                msg_content = message_container
+            else:
+                print(f"Empty or unrecognized message content for message_id: {message_id}. Message container: {json.dumps(message_container, indent=2)}")
+                return {"status": "empty_or_unrecognized_message_content", "id": message_id}
+        elif not msg_content:
+            print(f"Critical: msg_content is None or empty for message_id: {message_id}")
+            return {"status": "critical_empty_message_content", "id": message_id}
+
+        media_info = None
+        media_type = None
+        extension = None
+
+        if 'imageMessage' in msg_content:
+            media_info = msg_content['imageMessage']
+            media_type = 'image'
+            extension = '.jpg'
+        elif 'videoMessage' in msg_content:
+            media_info = msg_content['videoMessage']
+            media_type = 'video'
+            extension = '.mp4'
+        elif 'audioMessage' in msg_content:
+            media_info = msg_content['audioMessage']
+            media_type = 'audio'
+            extension = '.ogg'
+        elif 'documentMessage' in msg_content:
+            media_info = msg_content['documentMessage']
+            media_type = 'document'
+            file_name = media_info.get("fileName", "")
+            _, ext = os.path.splitext(file_name)
+            extension = ext if ext else ''
+
+        if media_info:
+            media_key = media_info.get('mediaKey')
+            media_url = media_info.get('url')
+            direct_path = media_info.get('directPath')
+
+            if media_key and media_url:
+                output_filename = f'{message_id}{extension}'
+                output_dir = 'media'
+                output_path = os.path.join(output_dir, output_filename)
+
+                # Para simulaciones locales, manejamos archivos locales directamente
+                if media_url.startswith('file://'):
+                    # Es una simulación con archivo local
+                    file_path = media_url[7:]  # Remover 'file://'
+                    try:
+                        with open(file_path, 'rb') as f:
+                            encrypted_data = f.read()
+                        
+                        # Para simulaciones, guardamos directamente sin decryptar
+                        os.makedirs(output_dir, exist_ok=True)
+                        with open(output_path, 'wb') as f:
+                            f.write(encrypted_data)
+                        
+                        print(f"Media saved successfully (simulation): {output_path}")
+                        save_message(sender, "user", f"[media:{media_type}] {output_path}")
+                        
+                        if media_type == 'image':
+                            old_confirmation_data = get_pending_confirmation(sender)
+                            if old_confirmation_data:
+                                old_image_message_id = old_confirmation_data.get('message_id', 'anterior')
+                                warning_message = (
+                                    "Veo que enviaste una nueva imagen. Vamos a procesar esta última. "
+                                    "Si querías confirmar una imagen anterior (ID aproximado: " + old_image_message_id + "), "
+                                    "por favor respóndenos sobre esa primero o reenvíala después de confirmar esta."
+                                )
+                                send_whatsapp_message(sender, warning_message)
+                                print(f"Sender {sender} sent a new image, superseding pending confirmation for message ID {old_image_message_id}.")
+
+                            new_confirmation_data = {
+                                "message_id": message_id,
+                                "output_path": output_path,
+                                "original_filename": output_filename
+                            }
+                            save_pending_confirmation(sender, new_confirmation_data)
+                            confirmation_question = "¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?"
+                            send_whatsapp_message(sender, confirmation_question)
+                            print(f"Image awaiting confirmation from {sender} for message_id {message_id}")
+                            return {'status': 'image_awaiting_confirmation', 'id': message_id}
+                        else:
+                            return {'status': 'media_processed_successfully_not_image', 'id': message_id, 'path': output_path}
+                            
+                    except Exception as e:
+                        print(f"Error processing local file {file_path}: {e}")
+                        return {'status': 'local_file_processing_error', 'id': message_id}
+                else:
+                    # Código original para URLs reales de WhatsApp
+                    encrypted_data = download_media(media_url)
+                    if encrypted_data:
+                        decryption_successful = decrypt_and_save_media(media_key, encrypted_data, output_path, media_type)
+                        if decryption_successful:
+                            print(f"Media decrypted and saved successfully: {output_path}")
+                            save_message(sender, "user", f"[media:{media_type}] {output_path}")
+                            if media_type == 'image':
+                                old_confirmation_data = get_pending_confirmation(sender)
+                                if old_confirmation_data:
+                                    old_image_message_id = old_confirmation_data.get('message_id', 'anterior')
+                                    warning_message = (
+                                        "Veo que enviaste una nueva imagen. Vamos a procesar esta última. "
+                                        "Si querías confirmar una imagen anterior (ID aproximado: " + old_image_message_id + "), "
+                                        "por favor respóndenos sobre esa primero o reenvíala después de confirmar esta."
+                                    )
+                                    send_whatsapp_message(sender, warning_message)
+                                    print(f"Sender {sender} sent a new image, superseding pending confirmation for message ID {old_image_message_id}.")
+
+                                new_confirmation_data = {
+                                    "message_id": message_id,
+                                    "output_path": output_path,
+                                    "original_filename": output_filename
+                                }
+                                save_pending_confirmation(sender, new_confirmation_data)
+                                confirmation_question = "¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?"
+                                send_whatsapp_message(sender, confirmation_question)
+                                print(f"Image awaiting confirmation from {sender} for message_id {message_id}")
+                                return {'status': 'image_awaiting_confirmation', 'id': message_id}
+                            else:
+                                return {'status': 'media_processed_successfully_not_image', 'id': message_id, 'path': output_path}
+                        else:
+                            print(f"Media decryption failed for {message_id}, type: {media_type}")
+                            return {'status': 'media_decryption_failed', 'id': message_id, 'type': media_type}
+                    else:
+                        print(f"Media download failed for {message_id}, url: {media_url}")
+                        return {'status': 'media_download_failed', 'id': message_id, 'url': media_url}
+            else:
+                print(f"Media message ({media_type}) for id {message_id}, but key/URL missing. URL: {media_url}, Key: {media_key}")
+                return {"status": "media_info_incomplete", "type": media_type, "id": message_id}
+
+        incoming_text = None
+        if "conversation" in msg_content:
+            incoming_text = msg_content["conversation"]
+        elif "extendedTextMessage" in msg_content:
+            incoming_text = msg_content["extendedTextMessage"].get("text")
+
+        if incoming_text:
+            save_message(sender, "user", incoming_text)
+
+        if not incoming_text:
+            print(f"Unsupported message type for id {message_id}. msg_content: {json.dumps(msg_content, indent=2)}")
+            return {"status": "unsupported_message_type", "id": message_id}
+
+        # Check if this sender has a pending confirmation
+        image_details = get_pending_confirmation(sender)
+        if image_details:
+            prompt_text = (
+                f"Analiza el siguiente mensaje del usuario: '{incoming_text}'. "
+                f"El usuario está respondiendo a la pregunta: '¿Esta imagen corresponde a un comprobante de transferencia, depósito o cualquier otro recibo de un pago realizado?'. "
+                f"Tu tarea es clasificar la respuesta del usuario. Responde ÚNICAMENTE con UNA de las siguientes tres palabras: AFFIRMATIVE, NEGATIVE, o UNCLEAR. "
+                f"No añadas ninguna explicación ni puntuación adicional."
+            )
+            
+            raw_classification = "error_gemini"
+            try:
+                gemini_classification_response = model.generate_content(prompt_text)
+                raw_classification = gemini_classification_response.text.strip()
+            except Exception as gen_err:
+                print(f"Error generating content with Gemini for classification: {gen_err}")
+            
+            processed_classification = raw_classification.lower()
+
+            print(f"Sender: {sender}, Incoming Text: \"{incoming_text}\", Raw Gemini Classification: \"{raw_classification}\", Processed Classification: \"{processed_classification}\"")
+            
+            if processed_classification == 'affirmative':
+                print(f"User {sender} confirmed (AFFIRMATIVE). Processing OCR for image: {image_details['output_path']}")
+                ocr_success = process_receipt_image(image_details['output_path'], image_details['original_filename'])
+                
+                if ocr_success:
+                    txt_filename = os.path.splitext(image_details['original_filename'])[0] + ".txt"
+                    txt_filepath = os.path.join(os.path.dirname(image_details['output_path']), txt_filename)
+                    
+                    try:
+                        with open(txt_filepath, 'r', encoding='utf-8') as f:
+                            receipt_content = f.read()
+                        send_whatsapp_message(sender, receipt_content)
+                        print(f"Sent OCR results to {sender} for image {image_details['original_filename']}")
+                        clear_pending_confirmation(sender)
+                        return {'status': 'ocr_processed_and_sent', 'id': image_details['message_id']}
+                    except FileNotFoundError:
+                        print(f"Error: OCR output file {txt_filepath} not found, though ocr_success was true.")
+                        send_whatsapp_message(sender, "Lo siento, hubo un error al leer el resultado del recibo.")
+                        clear_pending_confirmation(sender)
+                        return {'status': 'ocr_processed_file_read_error', 'id': image_details['message_id']}
+                    except Exception as e_read:
+                        print(f"Error reading OCR output file {txt_filepath}: {e_read}")
+                        send_whatsapp_message(sender, "Lo siento, hubo un error al leer el resultado del recibo.")
+                        clear_pending_confirmation(sender)
+                        return {'status': 'ocr_processed_file_read_error', 'id': image_details['message_id']}
+                else:
+                    print(f"OCR processing failed for {image_details['original_filename']} for sender {sender}")
+                    send_whatsapp_message(sender, "Lo siento, no pude procesar la imagen del recibo.")
+                    clear_pending_confirmation(sender)
+                    return {'status': 'ocr_processing_failed', 'id': image_details['message_id']}
+            
+            elif processed_classification == 'negative':
+                print(f"User {sender} denied confirmation (NEGATIVE) for image {image_details['original_filename']}")
+                send_whatsapp_message(sender, "Entendido. Si la imagen no era un recibo, no la procesaré. Puede enviar otra imagen si lo desea o hacerme una pregunta.")
+                clear_pending_confirmation(sender)
+                return {'status': 'ocr_cancelled_by_user', 'id': image_details['message_id']}
+            
+            else:
+                print(f"Confirmation unclear from {sender} for image {image_details['original_filename']}. Processed Classification: {processed_classification}")
+                send_whatsapp_message(sender, "No entendí tu respuesta. Por favor, responde 'sí' o 'no' para el recibo anterior, o envía un nuevo mensaje si quieres que ignore la imagen.")
+                return {'status': 'confirmation_unclear', 'id': image_details['message_id']}
+        
+        else:
+            # No pending confirmation, process as a general question
+            context_str = build_context_from_db(sender, limit=20)
+            if context_str:
+                prompt_to_llm = (
+                    "Eres un asistente que ayuda a la empresa NaftaEc. Usa el siguiente historial de conversación para entender el contexto y luego responde al último mensaje:\n\n"
+                    f"{context_str}\n\n"
+                    f"Usuario (último mensaje): {incoming_text}"
+                )
+            else:
+                prompt_to_llm = incoming_text or ""
+
+            try:
+                gemini_response = responder(prompt_to_llm)
+                answer_text = gemini_response if isinstance(gemini_response, str) else (getattr(gemini_response, "text", "") or str(gemini_response))
+            except Exception as e:
+                print(f"[LLM] Error generando respuesta con contexto: {e}")
+                answer_text = "Lo siento, ocurrió un error al generar la respuesta."
+
+            save_message(sender, "assistant", answer_text)
+            send_whatsapp_message(sender, answer_text)
+            return {"status": "text_message_processed_with_context", "id": message_id}
+
+    except Exception as e:
+        print(f"Error in handle_webhook_data: {str(e)}\nTraceback: {traceback.format_exc()}")
+        return {"status": "error", "message": str(e)}
+
+def send_whatsapp_message_simulator(recipient, text):
+    """
+    Versión simulada de send_whatsapp_message que solo muestra en consola
+    """
+    print(f"[ASISTENTE] {text}")
+    
+    # Guardar en la base de datos normalmente
+    recipient_for_db = canonicalize_jid(recipient)
+    try:
+        save_message(recipient_for_db, "assistant", text)
+    except Exception as e:
+        print(f"[DB] Error guardando mensaje enviado: {e}")
+    
+    return True
+
+# Detectar si estamos en modo simulación y reemplazar la función
+if os.environ.get('SIMULATION_MODE') or '--simulate' in sys.argv:
+    print("=== MODO SIMULACIÓN ACTIVADO ===")
+    send_whatsapp_message = send_whatsapp_message_simulator
+
+# --- Fin código simulador ---
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    # Verificar si se ejecuta en modo simulación
+    if '--simulate' in sys.argv:
+        print("Ejecutando en modo simulación...")
+        # No iniciar el servidor Flask en modo simulación
+        print("Servidor Flask no iniciado (modo simulación)")
+    else:
+        app.run(host="0.0.0.0", port=5001, debug=True)
+        # Ejecución normal - iniciar servidor Flask
