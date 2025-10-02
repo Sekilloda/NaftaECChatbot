@@ -7,6 +7,7 @@ import re
 import traceback
 import configparser # Added
 import sys # Added
+import random
 
 # Third-party library imports
 import cv2
@@ -57,6 +58,16 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 """)
+# --- Nueva tabla para parámetros de conversación ---
+_cursor.execute("""
+CREATE TABLE IF NOT EXISTS conversation_params (
+    user_id TEXT PRIMARY KEY,
+    model_name TEXT NOT NULL,
+    context_window INTEGER NOT NULL,
+    temperature REAL NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+""")
 _conn.commit()
 
 def canonicalize_jid(jid: str) -> str:
@@ -100,6 +111,46 @@ def get_last_messages(user_id: str, limit: int = 5):
         print(f"[DB] Error leyendo historial para {user_id}: {e}")
         return []
 # ------------------------------------------------------------------------
+def get_or_create_conversation_params(user_id: str) -> dict:
+    """
+    Obtiene los parámetros de A/B testing para un usuario.
+    Si no existen, los crea aleatoriamente y los guarda en la DB.
+    """
+    user_id_norm = canonicalize_jid(user_id)
+    _cursor.execute("SELECT model_name, context_window, temperature FROM conversation_params WHERE user_id=?", (user_id_norm,))
+    params = _cursor.fetchone()
+
+    if params:
+        return {"model_name": params[0], "context_window": params[1], "temperature": params[2]}
+    else:
+        # No hay parámetros, los creamos aleatoriamente
+        model_name = random.choice(["gemini-2.5-flash-lite", "mistral-small-2506"])
+        context_window = random.choice([10, 20])
+        
+        if model_name == "gemini-2.5-flash-lite":
+            temperature = random.choice([0.2, 0.8])
+        else: # mistral-small-3.2
+            temperature = random.choice([0.1, 0.7])
+
+        new_params = {
+            "model_name": model_name,
+            "context_window": context_window,
+            "temperature": temperature,
+        }
+
+        try:
+            _cursor.execute(
+                "INSERT INTO conversation_params (user_id, model_name, context_window, temperature) VALUES (?, ?, ?, ?)",
+                (user_id_norm, new_params["model_name"], new_params["context_window"], new_params["temperature"])
+            )
+            _conn.commit()
+            print(f"[A/B Test] Nuevos parámetros para {user_id_norm}: {new_params}")
+        except Exception as e:
+            print(f"[DB] Error creando parámetros para {user_id_norm}: {e}")
+            # Fallback a default si la DB falla
+            return {"model_name": "gemini-2.5-flash-lite", "context_window": 10, "temperature": 0.2}
+            
+        return new_params
 
 
 # ------------------ Funciones para leer historial y construir contexto ------------------
@@ -386,11 +437,13 @@ descripciones = [d["question"] for d in documentos]
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 embeddings = embedder.encode(descripciones)
 
-def responder(pregunta_actual, historial_conversacion="", k=2):
+def responder(pregunta_actual, historial_conversacion="", k=2, model_name="gemini-2.5-flash-lite", temperature=0.2):
     """
     Finds relevant context and generates a response using a structured prompt.
     - pregunta_actual: The user's most recent message. Used for semantic search.
     - historial_conversacion: The string of previous turns in the conversation.
+    - model_name: The name of the model to use for generation.
+    - temperature: The temperature for the generation.
     """
     # STEP 1: RETRIEVAL (using ONLY the current question)
     pregunta_emb = embedder.encode([pregunta_actual])
@@ -436,8 +489,32 @@ def responder(pregunta_actual, historial_conversacion="", k=2):
 
 Asistente:"""
 
-    # Generate the final answer
-    respuesta = model.generate_content(prompt_final).text.strip()
+     # STEP 4: DYNAMIC GENERATION
+    print(f"[LLM] Generating response using {model_name} with temp={temperature}")
+
+    try:
+        if "gemini" in model_name:
+            gemini_model = genai.GenerativeModel(model_name)
+            generation_config = genai.types.GenerationConfig(temperature=temperature)
+            respuesta = gemini_model.generate_content(prompt_final, generation_config=generation_config).text.strip()
+        elif "mistral" in model_name:
+            mistral_client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+            messages = [{"role": "user", "content": prompt_final}]
+            chat_response = mistral_client.chat.complete(
+                model=model_name,
+                messages=messages,
+                temperature=temperature
+            )
+            respuesta = chat_response.choices[0].message.content.strip()
+        else:
+            print(f"[LLM_ERROR] Unknown model: {model_name}. Reverting to default.")
+            # Fallback to the original global model
+            respuesta = model.generate_content(prompt_final).text.strip()
+    except Exception as e:
+        print(f"[LLM] Error during dynamic generation with {model_name}: {e}")
+        respuesta = "Lo siento, estoy teniendo dificultades para procesar tu solicitud en este momento."
+
+    
     return respuesta
 
 def download_media(media_url):
@@ -563,7 +640,6 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         print(traceback.format_exc())
         return False
 
-@app.route("/webhook", methods=["POST"])
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
@@ -800,17 +876,25 @@ def webhook():
         else:
             # No hay confirmación pendiente, se procesa como una pregunta general con RAG y contexto
             print(f"Processing general question from {sender}: '{incoming_text}'")
-            context_str = build_context_from_db(sender, limit=10) 
+            # Obtener parámetros de A/B testing
+            conv_params = get_or_create_conversation_params(sender)
+            
+            context_str = build_context_from_db(sender, limit=conv_params["context_window"]) 
+ 
 
             try:
                 # `incoming_text` (pregunta actual) se usa para la búsqueda semántica.
                 # `context_str` (historial) se usa para que la conversación fluya.
-                answer_text = responder(pregunta_actual=incoming_text, historial_conversacion=context_str)
+                answer_text = responder(
+                    pregunta_actual=incoming_text,
+                    historial_conversacion=context_str,
+                    model_name=conv_params["model_name"],
+                    temperature=conv_params["temperature"]
+                )
             except Exception as e:
                 print(f"[LLM] Error in new responder function: {e}")
                 answer_text = "Lo siento, ocurrió un error al procesar tu solicitud."
 
-            save_message(sender, "assistant", answer_text)
             send_whatsapp_message(sender, answer_text)
             return jsonify({"status": "text_message_processed_with_rag_and_context", "id": message_id})
 
