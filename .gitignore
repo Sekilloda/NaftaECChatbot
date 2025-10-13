@@ -11,3 +11,5 @@
 **/__pycache__
 # Ignore internal json files
 **/*.json
+# Ignore databases
+**/*.db
