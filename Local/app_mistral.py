@@ -805,7 +805,7 @@ def webhook():
             print(f"Unsupported message type for id {message_id}. msg_content: {json.dumps(msg_content, indent=2)}")
             return jsonify({"status": "unsupported_message_type", "id": message_id})
 
-        if incoming_text.strip().lower() == "fin de la conversacion.":
+        if incoming_text.strip().lower() == "fin.":
             db = get_db()
             db.execute("UPDATE conversation_params SET status='awaiting_rating' WHERE user_id=? AND status='active'", (canonicalize_jid(sender),))
             db.commit()
