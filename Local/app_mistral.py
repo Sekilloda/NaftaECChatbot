@@ -12,7 +12,7 @@ import random
 # Third-party library imports
 import cv2
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 import google.generativeai as genai
 import numpy as np
 from PIL import Image
@@ -40,35 +40,63 @@ load_dotenv()
 app = Flask(__name__)
 
 
-# --- SQLite: persistencia de conversaciones ------------------------------
+# --- SQLite: robusta para concurrencia ----------------------------------
 import sqlite3
+
 DB_PATH = "chat_history.db"
 
-# Conexión global (check_same_thread=False porque Flask puede usar hilos)
-_conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-_cursor = _conn.cursor()
+def get_db():
+    """
+    Abre una nueva conexión a la base de datos si no existe una en el contexto de la solicitud actual.
+    """
+    if 'db' not in g:
+        g.db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+        g.db.row_factory = sqlite3.Row
+    return g.db
 
-# Crear tabla si no existe
-_cursor.execute("""
-CREATE TABLE IF NOT EXISTS conversations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-""")
-# --- Nueva tabla para parámetros de conversación ---
-_cursor.execute("""
-CREATE TABLE IF NOT EXISTS conversation_params (
-    user_id TEXT PRIMARY KEY,
-    model_name TEXT NOT NULL,
-    context_window INTEGER NOT NULL,
-    temperature REAL NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-""")
-_conn.commit()
+@app.teardown_appcontext
+def close_db(e=None):
+    """Cierra la conexión a la base de datos al final de la solicitud."""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
+
+def init_db():
+    """Inicializa la base de datos y crea las tablas si no existen."""
+    db = get_db()
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS conversation_params (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            context_window INTEGER NOT NULL,
+            temperature REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active', -- 'active', 'awaiting_rating', or 'finished'
+            satisfaction_rating INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS parameter_combination_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_name TEXT NOT NULL,
+            context_window INTEGER NOT NULL,
+            temperature REAL NOT NULL,
+            conversation_count INTEGER DEFAULT 0,
+            UNIQUE(model_name, context_window, temperature)
+        );
+    """)
+    db.commit()
+
+# Initialize the database when the app starts
+with app.app_context():
+    init_db()
+
 
 def canonicalize_jid(jid: str) -> str:
     """
@@ -88,11 +116,12 @@ def save_message(user_id: str, role: str, content: str):
     """Guarda un mensaje (user/assistant) en la base de datos. No lanza excepción si falla."""
     try:
         user_id_norm = canonicalize_jid(user_id)
-        _cursor.execute(
+        db = get_db()
+        db.execute(
             "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
             (user_id_norm, role, content)
         )
-        _conn.commit()
+        db.commit()
     except Exception as e:
         print(f"[DB] Error guardando mensaje para {user_id}: {e}")
 
@@ -100,11 +129,11 @@ def get_last_messages(user_id: str, limit: int = 5):
     """Devuelve los últimos 'limit' mensajes CRONOLÓGICOS (del más antiguo al más reciente)."""
     try:
         user_id_norm = canonicalize_jid(user_id)
-        _cursor.execute(
+        db = get_db()
+        rows = db.execute(
             "SELECT role, content, created_at FROM conversations WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_id_norm, limit)
-        )
-        rows = _cursor.fetchall()
+        ).fetchall()
         # devolver en orden cronológico (más antiguo primero)
         return rows[::-1]
     except Exception as e:
@@ -117,20 +146,41 @@ def get_or_create_conversation_params(user_id: str) -> dict:
     Si no existen, los crea aleatoriamente y los guarda en la DB.
     """
     user_id_norm = canonicalize_jid(user_id)
-    _cursor.execute("SELECT model_name, context_window, temperature FROM conversation_params WHERE user_id=?", (user_id_norm,))
-    params = _cursor.fetchone()
+    db = get_db()
+    params = db.execute("SELECT model_name, context_window, temperature FROM conversation_params WHERE user_id=? AND status='active'", (user_id_norm,)).fetchone()
 
     if params:
-        return {"model_name": params[0], "context_window": params[1], "temperature": params[2]}
+        return {"model_name": params["model_name"], "context_window": params["context_window"], "temperature": params["temperature"]}
     else:
-        # No hay parámetros, los creamos aleatoriamente
-        model_name = random.choice(["gemini-2.5-flash-lite", "mistral-small-2506"])
-        context_window = random.choice([10, 20])
-        
-        if model_name == "gemini-2.5-flash-lite":
-            temperature = random.choice([0.2, 0.8])
-        else: # mistral-small-3.2
-            temperature = random.choice([0.1, 0.7])
+        # Parameter generation loop
+        while True:
+            model_name = random.choice(["gemini-2.5-flash-lite", "mistral-small-2506"])
+            context_window = random.choice([10, 20])
+            
+            if "gemini" in model_name:
+                temperature = random.choice([1.0, 0.5])
+            else: # mistral
+                temperature = random.choice([0.15, 0.7])
+
+            # Check usage count for this combination
+            count_row = db.execute(
+                "SELECT conversation_count FROM parameter_combination_stats WHERE model_name=? AND context_window=? AND temperature=?",
+                (model_name, context_window, temperature)
+            ).fetchone()
+            
+            count = count_row[0] if count_row else 0
+
+            if count < 12:
+                break  # Found a combination with less than 12 uses
+
+            # If count is >= 12, check if all combinations have reached the threshold
+            total_combinations = 2 * 2 * 2 # 2 models, 2 contexts, 2 temperatures
+            fully_saturated_combinations = db.execute(
+                "SELECT COUNT(*) FROM parameter_combination_stats WHERE conversation_count >= 12"
+            ).fetchone()[0]
+
+            if fully_saturated_combinations == total_combinations:
+                break # All combinations are saturated, proceed with the current one
 
         new_params = {
             "model_name": model_name,
@@ -139,16 +189,21 @@ def get_or_create_conversation_params(user_id: str) -> dict:
         }
 
         try:
-            _cursor.execute(
-                "INSERT INTO conversation_params (user_id, model_name, context_window, temperature) VALUES (?, ?, ?, ?)",
+            db.execute(
+                "INSERT INTO conversation_params (user_id, model_name, context_window, temperature, status) VALUES (?, ?, ?, ?, 'active')",
                 (user_id_norm, new_params["model_name"], new_params["context_window"], new_params["temperature"])
             )
-            _conn.commit()
+            # Actualizamos las estadísticas
+            db.execute(
+                "INSERT INTO parameter_combination_stats (model_name, context_window, temperature, conversation_count) VALUES (?, ?, ?, 1) ON CONFLICT(model_name, context_window, temperature) DO UPDATE SET conversation_count = conversation_count + 1",
+                (new_params["model_name"], new_params["context_window"], new_params["temperature"])
+            )
+            db.commit()
             print(f"[A/B Test] Nuevos parámetros para {user_id_norm}: {new_params}")
         except Exception as e:
             print(f"[DB] Error creando parámetros para {user_id_norm}: {e}")
             # Fallback a default si la DB falla
-            return {"model_name": "gemini-2.5-flash-lite", "context_window": 10, "temperature": 0.2}
+            return {"model_name": "gemini-2.5-flash-lite", "context_window": 10, "temperature": 1.0}
             
         return new_params
 
@@ -166,32 +221,14 @@ def fetch_last_messages_from_db(user_id: str, limit: int = 5):
             return []
 
         user_norm = canonicalize_jid(user_id)
-
-        # Intentamos usar el cursor global (_cursor). Si no existe, abrimos conexión local.
-        try:
-            cur = _cursor
-            conn_local = _conn
-        except NameError:
-            # Fallback si la variable global no existe por alguna razón
-            conn_local = sqlite3.connect(DB_PATH, check_same_thread=False)
-            cur = conn_local.cursor()
-
-        cur.execute(
+        db = get_db()
+        rows = db.execute(
             "SELECT role, content, created_at FROM conversations WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
             (user_norm, limit)
-        )
-        rows = cur.fetchall()
+        ).fetchall()
         # rows están en orden DESC por created_at — invertimos para entregar cronológico ASC
         rows = rows[::-1]
         result = [{"role": r[0], "content": r[1], "created_at": r[2]} for r in rows]
-
-        # Si abrimos conexión local en fallback, cerramos cursor/conn
-        try:
-            if conn_local is not _conn:
-                cur.close()
-                conn_local.close()
-        except Exception:
-            pass
 
         return result
     except Exception as e:
@@ -767,6 +804,31 @@ def webhook():
         if not incoming_text:
             print(f"Unsupported message type for id {message_id}. msg_content: {json.dumps(msg_content, indent=2)}")
             return jsonify({"status": "unsupported_message_type", "id": message_id})
+
+        if incoming_text.strip().lower() == "fin de la conversacion.":
+            db = get_db()
+            db.execute("UPDATE conversation_params SET status='awaiting_rating' WHERE user_id=? AND status='active'", (canonicalize_jid(sender),))
+            db.commit()
+            send_whatsapp_message(sender, "Gracias por tu tiempo. Por favor, califica esta conversación del 1 al 7 (7 es la mejor).")
+            return jsonify({"status": "awaiting_rating"})
+
+        # Check if there's a conversation awaiting a rating for this user
+        db = get_db()
+        rating_pending = db.execute("SELECT id FROM conversation_params WHERE user_id=? AND status='awaiting_rating'", (canonicalize_jid(sender),)).fetchone()
+
+        if rating_pending:
+            try:
+                rating = int(incoming_text.strip())
+                if 1 <= rating <= 7:
+                    db.execute("UPDATE conversation_params SET satisfaction_rating=?, status='finished' WHERE id=?", (rating, rating_pending['id']))
+                    db.commit()
+                    send_whatsapp_message(sender, "¡Gracias por tu calificación!")
+                    return jsonify({"status": "rating_received"})
+                else:
+                    raise ValueError("Rating out of range")
+            except (ValueError, TypeError):
+                send_whatsapp_message(sender, "Por favor, ingresa un número del 1 al 7.")
+                return jsonify({"status": "invalid_rating"})
 
         pending_details = get_pending_confirmation(sender)
         if pending_details:
