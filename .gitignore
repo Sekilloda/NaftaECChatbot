@@ -13,3 +13,7 @@
 **/*.json
 # Ignore databases
 **/*.db
+# Ignore reports
+**/reportes_descargados
+# Ignore markdown files
+**/*.md
