@@ -4,7 +4,11 @@ import threading
 import time
 import pandas as pd
 import requests
-import fcntl
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 REGISTRATIONS_DF = None
 REGISTRATIONS_LOCK = threading.Lock()
@@ -86,15 +90,21 @@ def update_registrations():
 
             if needs_download:
                 # 2. File-based lock to prevent multiple workers downloading simultaneously
-                with open(lock_path, 'w') as f_lock:
-                    try:
-                        fcntl.flock(f_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        print(f"[CHRONOTRACK] Worker {os.getpid()} acquired lock. Downloading...")
-                        download_report_logic()
-                        # The flock is automatically released when the file is closed/with block ends
-                    except BlockingIOError:
-                        # Another worker has the lock
-                        pass
+                if fcntl:
+                    with open(lock_path, 'w') as f_lock:
+                        try:
+                            fcntl.flock(f_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            print(f"[CHRONOTRACK] Worker {os.getpid()} acquired lock. Downloading...")
+                            download_report_logic()
+                            # The flock is automatically released when the file is closed/with block ends
+                        except (BlockingIOError, OSError):
+                            # Another worker has the lock
+                            pass
+                else:
+                    # Fallback for Windows or systems without fcntl
+                    # On Windows, we usually run a single process (waitress), so it's safer.
+                    print(f"[CHRONOTRACK] Worker {os.getpid()} - Downloading (no lock)...")
+                    download_report_logic()
 
             # 3. Load the latest local file into memory (Each worker has its own copy)
             existing_files = [os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.startswith(report_file_pattern)]

@@ -33,6 +33,9 @@ def load_params(config_file_path):
             params['clahe_tile_grid_size_y'] = int(config_params.get('clahe_tile_grid_size_y', DEFAULT_PARAMS['clahe_tile_grid_size_y']))
             params['tesseract_psm'] = str(config_params.get('tesseract_psm', DEFAULT_PARAMS['tesseract_psm']))
             params['tesseract_lang'] = config_params.get('tesseract_lang', DEFAULT_PARAMS['tesseract_lang'])
+            if 'tesseract_cmd' in config_params:
+                params['tesseract_cmd'] = config_params['tesseract_cmd']
+                pytesseract.pytesseract.tesseract_cmd = params['tesseract_cmd']
     except Exception as e:
         print(f"Error reading config: {e}")
     return params

@@ -5,6 +5,7 @@ clahe_tile_grid_size_y = 4
 tesseract_psm = 6
 tesseract_lang = spa
 save_intermediate_images = True
+# tesseract_cmd = C:\Program Files\Tesseract-OCR\tesseract.exe
 
 # Tesseract Page Segmentation Modes (PSM)
 # 0    Orientation and script detection (OSD) only.
