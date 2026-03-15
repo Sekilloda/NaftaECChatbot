@@ -1,17 +1,2 @@
-#needs python 3.13.5
-flask
-python-dotenv
-requests
-google-generativeai
+-r requirements_base.txt
 waitress
-sentence_transformers
-scikit-learn
-pycryptodome
-Pillow
-pytesseract
-opencv-python
-mistralai
-pandas
-openpyxl
-langchain
-langchain-google-genai

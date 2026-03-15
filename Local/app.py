@@ -11,17 +11,21 @@ load_dotenv()
 from core.whatsapp import send_whatsapp_message, download_media, decrypt_and_save_media
 from core.ocr import process_receipt_image
 from core.knowledge import responder, client
-from core.chronotrack import update_registrations
+from core.registrations import update_registrations
 from core.database import (
     init_db, save_message, get_last_messages, 
-    save_pending_confirmation, get_pending_confirmation, clear_pending_confirmation
+    save_pending_confirmation, get_pending_confirmation, clear_pending_confirmation,
+    set_user_status, get_user_status
 )
 
 app = Flask(__name__)
+ADMIN_PHONE = os.getenv("ADMIN_PHONE")
+if not ADMIN_PHONE:
+    print("[APP] WARNING: ADMIN_PHONE not set. Ayuda status will not forward messages.")
 
-# Initialize DB and start sync thread
-init_db()
-threading.Thread(target=update_registrations, daemon=True).start()
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "healthy", "user_status": "ready"}), 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -52,6 +56,18 @@ def webhook():
         sender = message_container.get("key", {}).get("remoteJid")
         message_id = message_container.get("key", {}).get("id", "unknown")
         msg_content = message_container.get("message", {})
+
+        # Handle users in 'ayuda' status (Human Takeover)
+        user_status = get_user_status(sender)
+        if user_status == 'ayuda':
+            incoming_text = msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text")
+            if incoming_text:
+                save_message(sender, "user", incoming_text)
+                if ADMIN_PHONE:
+                    admin_msg = f"📩 AYUDA SOLICITADA:\nUsuario: {sender}\nMensaje: {incoming_text}"
+                    send_whatsapp_message(ADMIN_PHONE, admin_msg)
+                return jsonify({"status": "forwarded_to_admin"})
+            return jsonify({"status": "ayuda_active_media_ignored"})
 
         # 1. Media Handling (Detection and Download)
         media_type = None
@@ -108,6 +124,10 @@ def webhook():
                 elif pending['state'] == 'awaiting_data_validation':
                     send_whatsapp_message(sender, "¡Excelente! Hemos validado tu comprobante. Pronto recibirás noticias nuestras.")
                     clear_pending_confirmation(sender)
+                elif pending['state'] == 'awaiting_ayuda_confirmation':
+                    set_user_status(sender, 'ayuda')
+                    send_whatsapp_message(sender, "Entendido. He activado la atención personalizada. Tu siguiente mensaje será enviado directamente a un representante de NaftaEC.")
+                    clear_pending_confirmation(sender)
             elif 'negative' in classification:
                 send_whatsapp_message(sender, "Entendido. No realizaré más acciones con esta imagen.")
                 clear_pending_confirmation(sender)
@@ -115,7 +135,18 @@ def webhook():
                 send_whatsapp_message(sender, "Por favor, responde 'sí' o 'no'.")
             return jsonify({'status': 'state_handled'})
 
-        # 4. General Query (Hybrid RAG + Chronotrack)
+        # 4. Help Detection (Edge Case Catcher)
+        help_prompt = f"Determina si el siguiente mensaje indica que el usuario necesita ayuda humana, tiene un problema que el bot no puede resolver, o está frustrado: '{incoming_text}'. Responde ÚNICAMENTE: HELP o OK."
+        help_res = client.models.generate_content(model="gemini-flash-lite-latest", contents=help_prompt)
+        if 'help' in help_res.text.strip().lower():
+            save_pending_confirmation(sender, {
+                "message_id": message_id, "output_path": "", 
+                "original_filename": "", "state": "awaiting_ayuda_confirmation"
+            })
+            send_whatsapp_message(sender, "¿Necesitas ayuda de un representante de NaftaEC? Por favor confirma si es así.")
+            return jsonify({"status": "help_requested_confirmation_sent"})
+
+        # 5. General Query (Hybrid RAG + Registrations)
         history = get_last_messages(sender, limit=20)
         response = responder(incoming_text, sender_jid=sender, history=[(m['role'], m['content']) for m in history])
         save_message(sender, "assistant", response)
@@ -130,4 +161,10 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    # Initialize DB and start sync thread here
+    init_db()
+    threading.Thread(target=update_registrations, daemon=True).start()
+    
+    port = int(os.getenv("PORT", 5001))
+    print(f"[APP] Starting NaftaEC Chatbot on port {port}...")
+    app.run(host="0.0.0.0", port=port, debug=True)

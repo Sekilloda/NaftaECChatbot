@@ -10,13 +10,16 @@ from Crypto.Util.Padding import unpad
 WASENDER_API_TOKEN = os.getenv("WASENDER_API_TOKEN")
 WASENDER_API_URL = "https://wasenderapi.com/api/send-message"
 
+if not WASENDER_API_TOKEN:
+    print("[WHATSAPP] WARNING: WASENDER_API_TOKEN is not set.")
+
 def download_media(media_url):
     try:
         response = requests.get(media_url, timeout=15)
         response.raise_for_status()
         return response.content
     except requests.exceptions.RequestException as e:
-        print(f"Error downloading media from {media_url}: {e}")
+        print(f"[WHATSAPP] Error downloading media from {media_url}: {e}")
         return None
 
 def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_type):
@@ -32,7 +35,7 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         app_info = app_info_map.get(media_type.lower(), b'WhatsApp Media Keys')
 
         if len(media_key) != 32:
-            print(f"Error: Media key length is not 32 bytes ({len(media_key)}).")
+            print(f"[WHATSAPP] Error: Media key length is not 32 bytes ({len(media_key)}).")
             return False
 
         expanded_keys = HKDF(master=media_key, key_len=48, salt=b'', hashmod=SHA256, context=app_info, num_keys=1)
@@ -59,10 +62,14 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         return True
 
     except Exception as e:
-        print(f"Error decrypting {output_path}: {e}")
+        print(f"[WHATSAPP] Error decrypting {output_path}: {e}")
         return False
 
 def send_whatsapp_message(recipient, text):
+    if not WASENDER_API_TOKEN:
+        print("[WHATSAPP] Cannot send message: WASENDER_API_TOKEN is missing.")
+        return False
+        
     if "@s.whatsapp.net" in recipient:
         recipient = recipient.split("@")[0]
     payload = {"to": recipient, "text": text}
@@ -72,7 +79,9 @@ def send_whatsapp_message(recipient, text):
     }
     try:
         response = requests.post(WASENDER_API_URL, json=payload, headers=headers, timeout=10)
+        if not response.ok:
+            print(f"[WHATSAPP] Failed to send message to {recipient}: {response.text}")
         return response.ok
     except requests.exceptions.RequestException as e:
-        print(f"Error sending message: {e}")
+        print(f"[WHATSAPP] Error sending message: {e}")
         return False

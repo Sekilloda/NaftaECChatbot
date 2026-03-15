@@ -7,12 +7,12 @@ from google import genai
 from google.genai import types
 from huggingface_hub import login
 
-# Load registration info from chronotrack module
-from core.chronotrack import get_user_registration_info, search_user_by_name
+# Load registration info from registrations module
+from core.registrations import get_user_registration_info, search_user_by_name
 
 # Setup Gemini Client
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # Handle Hugging Face Authentication
 HF_TOKEN = os.getenv("HF_TOKEN")
@@ -20,16 +20,37 @@ if HF_TOKEN:
     try:
         login(token=HF_TOKEN)
     except Exception as e:
-        print(f"HF Login failed: {e}")
+        print(f"[KNOWLEDGE] HF Login failed: {e}")
 
-# Load FAQs
-df = pd.read_excel("faqs.xlsx")
-documentos = df.to_dict(orient="records")
-descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in documentos]
+# Global variables for lazy loading
+_EMBEDDER = None
+_EMBEDDINGS = None
+_FAQS_DF = None
+_DOCUMENTOS = None
 
-# Embedder for FAQ RAG
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
-embeddings = embedder.encode(descripciones)
+def _get_knowledge_base():
+    global _EMBEDDER, _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
+    
+    if _FAQS_DF is None:
+        faq_path = "faqs.xlsx"
+        if not os.path.exists(faq_path):
+            print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
+            return None, None, None, None
+            
+        try:
+            _FAQS_DF = pd.read_excel(faq_path)
+            _DOCUMENTOS = _FAQS_DF.to_dict(orient="records")
+            descripciones = [d["question"] if d["type"] == "faq" else d["description"] for d in _DOCUMENTOS]
+            
+            print("[KNOWLEDGE] Initializing SentenceTransformer...")
+            _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
+            _EMBEDDINGS = _EMBEDDER.encode(descripciones)
+            print("[KNOWLEDGE] Knowledge base loaded successfully.")
+        except Exception as e:
+            print(f"[KNOWLEDGE] Error loading knowledge base: {e}")
+            return None, None, None, None
+            
+    return _EMBEDDER, _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
 
 def responder(pregunta, sender_jid=None, history=None, k=2):
     """
@@ -43,7 +64,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     # 1. Deterministic Lookup by Phone (WhatsApp ID)
     registration_info = get_user_registration_info(sender_jid) if sender_jid else None
     if registration_info:
-        print(f"[HYBRID] Phone match found for {sender_jid}")
+        print(f"[KNOWLEDGE] Phone match found for {sender_jid}")
     
     # 2. Heuristic: If no phone match, see if the user mentioned a name
     if not registration_info:
@@ -51,40 +72,45 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         name_match = re.search(r"(?i)(?:soy|me llamo|mi nombre es|habla)\s+([a-záéíóúüñ\s]{4,40})", pregunta)
         if name_match:
             potential_name = name_match.group(1).strip()
-            print(f"[HYBRID] Searching for name: '{potential_name}'")
+            print(f"[KNOWLEDGE] Searching for name: '{potential_name}'")
             registration_info = search_user_by_name(potential_name)
             if registration_info:
-                print(f"[HYBRID] Name match found for '{potential_name}'")
+                print(f"[KNOWLEDGE] Name match found for '{potential_name}'")
                 registration_info = f"[MATCH BY NAME: '{potential_name}'] {registration_info}"
             else:
-                print(f"[HYBRID] No name match found for '{potential_name}'")
+                print(f"[KNOWLEDGE] No name match found for '{potential_name}'")
 
     registration_context = ""
     if registration_info:
         registration_context = (
-            "--- DATOS VERIFICADOS DEL USUARIO (CHRONOTRACK) ---\n"
+            "--- DATOS VERIFICADOS DEL USUARIO (REGISTRO NJUKO) ---\n"
             "Usa estos datos como verdad absoluta para este usuario específico:\n"
             f"{registration_info}\n"
         )
     else:
-        print("[HYBRID] No registration info found for this user/message.")
+        print("[KNOWLEDGE] No registration info found for this user/message.")
 
     # 3. RAG Lookup from FAQs
-    pregunta_emb = embedder.encode([pregunta])
-    similitudes = cosine_similarity(pregunta_emb, embeddings)[0]
-    top_k_idx = similitudes.argsort()[-k:][::-1]
-
     faq_context = "--- BASE DE CONOCIMIENTOS (FAQs) ---\n"
-    found_faq = False
-    for idx in top_k_idx:
-        if similitudes[idx] > 0.45: 
-            item = documentos[idx]
-            if item["type"] == "faq":
-                faq_context += f"Pregunta: {item['question']}\nRespuesta: {item['answer']}\n"
-                found_faq = True
+    embedder, embeddings, df, documentos = _get_knowledge_base()
     
-    if not found_faq:
-        faq_context += "No hay una respuesta exacta en las FAQs. Responde con amabilidad general basándote en la marca NaftaEC.\n"
+    if embedder is not None:
+        pregunta_emb = embedder.encode([pregunta])
+        similitudes = cosine_similarity(pregunta_emb, embeddings)[0]
+        top_k_idx = similitudes.argsort()[-k:][::-1]
+
+        found_faq = False
+        for idx in top_k_idx:
+            if similitudes[idx] > 0.45: 
+                item = documentos[idx]
+                if item["type"] == "faq":
+                    faq_context += f"Pregunta: {item['question']}\nRespuesta: {item['answer']}\n"
+                    found_faq = True
+        
+        if not found_faq:
+            faq_context += "No hay una respuesta exacta en las FAQs. Responde con amabilidad general basándote en la marca NaftaEC.\n"
+    else:
+        faq_context += "Base de conocimientos no disponible en este momento.\n"
 
     # 4. History Assembly
     history_str = ""

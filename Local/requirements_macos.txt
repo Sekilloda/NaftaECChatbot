@@ -1,19 +1,2 @@
-#needs python 3.11
-numpy==1.26.4
-torch
-flask
-python-dotenv
-requests
-google-generativeai
+-r requirements_base.txt
 gunicorn
-sentence_transformers
-scikit-learn
-pycryptodome
-Pillow
-pytesseract
-opencv-python
-pandas
-openpyxl
-mistralai
-langchain
-langchain-google-genai

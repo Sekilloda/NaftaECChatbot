@@ -1,19 +1,2 @@
-# Requirements for NaftaECChatbot (Production)
-numpy==1.26.4
-torch
-flask
-python-dotenv
-requests
-google-genai
+-r requirements_base.txt
 gunicorn
-sentence_transformers
-scikit-learn
-pycryptodome
-Pillow
-pytesseract
-opencv-python
-pandas
-openpyxl
-beautifulsoup4
-mistralai
-huggingface_hub

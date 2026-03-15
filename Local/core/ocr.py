@@ -5,10 +5,15 @@ import numpy as np
 import pytesseract
 import base64
 import json
+import platform
 from PIL import Image
 import configparser
 from google import genai
 from google.genai import types
+
+# Initialize Gemini Client at module level
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 DEFAULT_PARAMS = {
     'clahe_clip_limit': '2.0',
@@ -22,6 +27,27 @@ DEFAULT_PARAMS = {
 def load_params(config_file_path):
     config = configparser.ConfigParser()
     params = DEFAULT_PARAMS.copy()
+    
+    # Platform-specific default Tesseract paths
+    if platform.system() == "Windows":
+        possible_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+            os.path.expanduser(r'~\AppData\Local\Tesseract-OCR\tesseract.exe')
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                pytesseract.pytesseract.tesseract_cmd = path
+                params['tesseract_cmd'] = path
+                break
+    elif platform.system() == "Darwin": # MacOS
+        if os.path.exists('/opt/homebrew/bin/tesseract'):
+            pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'
+            params['tesseract_cmd'] = '/opt/homebrew/bin/tesseract'
+        elif os.path.exists('/usr/local/bin/tesseract'):
+            pytesseract.pytesseract.tesseract_cmd = '/usr/local/bin/tesseract'
+            params['tesseract_cmd'] = '/usr/local/bin/tesseract'
+
     if not os.path.exists(config_file_path):
         return params
     try:
@@ -37,7 +63,7 @@ def load_params(config_file_path):
                 params['tesseract_cmd'] = config_params['tesseract_cmd']
                 pytesseract.pytesseract.tesseract_cmd = params['tesseract_cmd']
     except Exception as e:
-        print(f"Error reading config: {e}")
+        print(f"[OCR] Error reading config: {e}")
     return params
 
 def preprocess_image(cv_image, params):
@@ -55,7 +81,7 @@ def encode_image_to_base64(image_path):
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
-        print(f"Error encoding image: {e}")
+        print(f"[OCR] Error encoding image: {e}")
         return None
 
 def run_mistral_ocr_pipeline(image_path: str):
@@ -65,10 +91,10 @@ def run_mistral_ocr_pipeline(image_path: str):
     """
     from mistralai import Mistral # Local import to keep it contained
     
-    print(f"[MISTRAL_OCR] Attempting Mistral OCR pipeline for {image_path}")
+    print(f"[OCR] Attempting Mistral OCR pipeline for {image_path}")
     mistral_api_key = os.getenv("MISTRAL_API_KEY")
     if not mistral_api_key:
-        print("Error: MISTRAL_API_KEY not set.")
+        print("[OCR] Error: MISTRAL_API_KEY not set.")
         return None
 
     base64_image = encode_image_to_base64(image_path)
@@ -86,13 +112,14 @@ def run_mistral_ocr_pipeline(image_path: str):
         )
         ocr_text = ocr_response.pages[0].markdown
     except Exception as e:
-        print(f"Mistral OCR Error: {e}")
+        print(f"[OCR] Mistral OCR Error: {e}")
+        return None
+
+    if not gemini_client:
+        print("[OCR] Gemini client not initialized. Cannot perform extraction.")
         return None
 
     try:
-        # Use native Gemini for extraction with the new google-genai SDK
-        gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        
         prompt = f"""
 Extrae la siguiente información del texto de un comprobante bancario en formato JSON.
 REGLAS:
@@ -113,11 +140,11 @@ Texto del comprobante:
         )
         return json.loads(response.text)
     except Exception as e:
-        print(f"Data extraction error: {e}")
+        print(f"[OCR] Data extraction error: {e}")
         return None
 
 def process_receipt_image(image_path: str, original_filename: str) -> bool:
-    print(f"Processing OCR for: {original_filename}")
+    print(f"[OCR] Processing OCR for: {original_filename}")
     params = load_params("ocr_params.txt")
 
     try:
@@ -149,7 +176,7 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
 
         # Mistral Fallback
         if any(val == "Not found" for val in [banco, total, documento, fecha]):
-            print("[OCR_FALLBACK] Attempting Mistral OCR.")
+            print("[OCR] Fallback: Attempting Mistral OCR.")
             mistral_data = run_mistral_ocr_pipeline(image_path)
             if mistral_data:
                 if banco == "Not found" and mistral_data.get('banco') != "N/A": banco = mistral_data['banco']
@@ -158,10 +185,15 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
                 if fecha == "Not found" and mistral_data.get('fecha') != "N/A": fecha = mistral_data['fecha']
 
         parsed_info = [f"Banco: {banco}", f"Total: {total}", f"Documento: {documento}", f"Fecha: {fecha}"]
-        output_txt_path = os.path.join(os.path.dirname(image_path), os.path.splitext(original_filename)[0] + ".txt")
+        
+        output_dir = os.path.dirname(image_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        output_txt_path = os.path.join(output_dir, os.path.splitext(original_filename)[0] + ".txt")
         with open(output_txt_path, "w", encoding="utf-8") as f:
             f.write("\n".join(parsed_info))
         return True
     except Exception as e:
-        print(f"OCR Error: {e}")
+        print(f"[OCR] Error: {e}")
         return False
