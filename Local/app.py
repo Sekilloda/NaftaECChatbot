@@ -19,6 +19,10 @@ from core.database import (
 )
 
 app = Flask(__name__)
+
+# Inicializamos la base de datos aquí
+init_db()
+
 ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 if not ADMIN_PHONE:
     print("[APP] WARNING: ADMIN_PHONE not set. Ayuda status will not forward messages.")
@@ -44,7 +48,6 @@ def webhook():
         if isinstance(messages, list) and len(messages) > 0:
             message_container = messages[0]
         elif isinstance(messages, dict):
-            # Sometimes APIs return dicts with string indices "0", "1"...
             message_container = messages.get("0") or messages
         else:
             print(f"WEBHOOK: Unrecognized message structure in data['data']: {json.dumps(data.get('data'))}")
@@ -64,7 +67,10 @@ def webhook():
             if incoming_text:
                 save_message(sender, "user", incoming_text)
                 if ADMIN_PHONE:
-                    admin_msg = f"📩 AYUDA SOLICITADA:\nUsuario: {sender}\nMensaje: {incoming_text}"
+                    push_name = message_container.get("pushName", "Desconocido")
+                    clean_sender = sender.split('@')[0]
+                    # Formato para los mensajes de seguimiento una vez que ya pidió ayuda
+                    admin_msg = f"💬 Mensaje de {push_name} ({clean_sender}):\n{incoming_text}"
                     send_whatsapp_message(ADMIN_PHONE, admin_msg)
                 return jsonify({"status": "forwarded_to_admin"})
             return jsonify({"status": "ayuda_active_media_ignored"})
@@ -104,7 +110,23 @@ def webhook():
         # 3. State Machine (Confirmations)
         pending = get_pending_confirmation(sender)
         if pending:
-            # Classification of user response
+            # Si estamos esperando un número de teléfono, capturamos el texto directamente sin pasarlo por Gemini
+            if pending['state'] == 'awaiting_phone_number':
+                user_phone = incoming_text.strip()
+                set_user_status(sender, 'ayuda')
+                
+                if ADMIN_PHONE:
+                    push_name = message_container.get("pushName", "Desconocido")
+                    clean_sender = sender.split('@')[0]
+                    admin_msg = f"🚨 NUEVA SOLICITUD DE AYUDA 🚨\n👤 Nombre: {push_name}\n📱 Número proporcionado: {user_phone}\n🔑 ID Oculto (LID): {clean_sender}"
+                    send_whatsapp_message(ADMIN_PHONE, admin_msg)
+                
+                send_whatsapp_message(sender, f"Gracias. Hemos registrado tu número: {user_phone}. Un representante de NaftaEC se comunicará contigo a la brevedad. A partir de ahora, tus mensajes serán leídos por un humano.")
+                
+                clear_pending_confirmation(sender)
+                return jsonify({'status': 'phone_recorded_ayuda_active'})
+
+            # Para los demás estados (donde se espera un Sí/No), usamos Gemini
             classify_prompt = f"Analiza el mensaje: '{incoming_text}'. El usuario está respondiendo a una confirmación. Responde ÚNICAMENTE: AFFIRMATIVE, NEGATIVE, o UNCLEAR."
             res = client.models.generate_content(model="gemini-flash-lite-latest", contents=classify_prompt)
             classification = res.text.strip().lower()
@@ -125,11 +147,15 @@ def webhook():
                     send_whatsapp_message(sender, "¡Excelente! Hemos validado tu comprobante. Pronto recibirás noticias nuestras.")
                     clear_pending_confirmation(sender)
                 elif pending['state'] == 'awaiting_ayuda_confirmation':
-                    set_user_status(sender, 'ayuda')
-                    send_whatsapp_message(sender, "Entendido. He activado la atención personalizada. Tu siguiente mensaje será enviado directamente a un representante de NaftaEC.")
-                    clear_pending_confirmation(sender)
+                    # Si dice que sí quiere ayuda, pasamos al siguiente estado para pedir el número
+                    save_pending_confirmation(sender, {**pending, "state": "awaiting_phone_number"})
+                    send_whatsapp_message(sender, "Para contactarte con el asesor envía tu número.")
+                    
             elif 'negative' in classification:
-                send_whatsapp_message(sender, "Entendido. No realizaré más acciones con esta imagen.")
+                if pending['state'] == 'awaiting_ayuda_confirmation':
+                    send_whatsapp_message(sender, "Entendido. Continuamos con el asistente virtual.")
+                else:
+                    send_whatsapp_message(sender, "Entendido. No realizaré más acciones con esta imagen.")
                 clear_pending_confirmation(sender)
             else:
                 send_whatsapp_message(sender, "Por favor, responde 'sí' o 'no'.")
@@ -139,6 +165,7 @@ def webhook():
         help_prompt = f"Determina si el siguiente mensaje indica que el usuario necesita ayuda humana, tiene un problema que el bot no puede resolver, o está frustrado: '{incoming_text}'. Responde ÚNICAMENTE: HELP o OK."
         help_res = client.models.generate_content(model="gemini-flash-lite-latest", contents=help_prompt)
         if 'help' in help_res.text.strip().lower():
+            # Restauramos la confirmación original
             save_pending_confirmation(sender, {
                 "message_id": message_id, "output_path": "", 
                 "original_filename": "", "state": "awaiting_ayuda_confirmation"
@@ -161,8 +188,7 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    # Initialize DB and start sync thread here
-    init_db()
+    # Inicia el hilo de sincronización en segundo plano
     threading.Thread(target=update_registrations, daemon=True).start()
     
     port = int(os.getenv("PORT", 5001))
