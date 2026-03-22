@@ -65,14 +65,22 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         print(f"[WHATSAPP] Error decrypting {output_path}: {e}")
         return False
 
+def normalize_phone(phone):
+    """Strips all non-digit characters."""
+    if not phone:
+        return ""
+    return "".join(filter(str.isdigit, str(phone)))
+
 def send_whatsapp_message(recipient, text):
     if not WASENDER_API_TOKEN:
         print("[WHATSAPP] Cannot send message: WASENDER_API_TOKEN is missing.")
         return False
         
-    if "@s.whatsapp.net" in recipient:
-        recipient = recipient.split("@")[0]
-    payload = {"to": recipient, "text": text}
+    # Remove @s.whatsapp.net if present and normalize to digits only
+    clean_recipient = recipient.split("@")[0]
+    normalized_recipient = normalize_phone(clean_recipient)
+    
+    payload = {"to": normalized_recipient, "text": text}
     headers = {
         "Authorization": f"Bearer {WASENDER_API_TOKEN}",
         "Content-Type": "application/json"
@@ -80,7 +88,7 @@ def send_whatsapp_message(recipient, text):
     try:
         response = requests.post(WASENDER_API_URL, json=payload, headers=headers, timeout=10)
         if not response.ok:
-            print(f"[WHATSAPP] Failed to send message to {recipient}: {response.text}")
+            print(f"[WHATSAPP] Failed to send message to {normalized_recipient}: {response.text}")
         return response.ok
     except requests.exceptions.RequestException as e:
         print(f"[WHATSAPP] Error sending message: {e}")

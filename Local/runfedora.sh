@@ -10,6 +10,6 @@ ngrok config add-authtoken $AUTHTOKEN
 dnf install python3.11
 dnf install -y tesseract tesseract-langpack-spa
 python3.11 -m venv venv
-venv/bin/pip install -r requirements.txt
-gunicorn --workers 4 --bind 0.0.0.0:$port app2:app
+venv/bin/pip install -r requirements_linux.txt
+gunicorn --workers 4 --bind 0.0.0.0:$port app:app
 /bin/sh -ec 'ngrok http --url=$NGROKURL $port'

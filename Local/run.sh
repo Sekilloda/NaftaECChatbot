@@ -12,6 +12,6 @@ apt install python3-full
 apt install python3.11-venv
 apt install python3-pip
 python3.11 -m venv venv
-venv/bin/pip install -r requirements.txt
+venv/bin/pip install -r requirements_linux.txt
 gunicorn --workers 4 --bind 0.0.0.0:$port app:app
 /bin/sh -ec 'ngrok http --url=$NGROKURL $port'

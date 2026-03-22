@@ -62,6 +62,7 @@ def update_registrations():
     
     lock_path = os.path.join(REPORT_DIR, "download.lock")
     filepath = os.path.join(REPORT_DIR, "latest_registry.xlsx")
+    last_loaded_mtime = None
     
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR, exist_ok=True)
@@ -88,31 +89,34 @@ def update_registrations():
 
             # 3. Load the latest local file into memory
             if os.path.exists(filepath):
-                # Using engine='openpyxl' for .xlsx files
-                new_df = pd.read_excel(filepath)
-                
-                if new_df.empty:
-                    print("[REGISTRATIONS] Warning: Downloaded registry is empty. Keeping old data.")
-                else:
-                    # Normalize columns to handle potential API changes
-                    new_df.columns = [c.strip() for c in new_df.columns]
+                file_mtime = os.path.getmtime(filepath)
+                if last_loaded_mtime is None or file_mtime != last_loaded_mtime or REGISTRATIONS_DF is None:
+                    # Using engine='openpyxl' for .xlsx files
+                    new_df = pd.read_excel(filepath)
                     
-                    # Phone normalization (Njuko uses 'Telefono')
-                    phone_col = 'Telefono' if 'Telefono' in new_df.columns else 'PHONE'
-                    if phone_col in new_df.columns:
-                        new_df['norm_phone'] = new_df[phone_col].apply(normalize_phone)
-                    
-                    # Name normalization
-                    f_col = 'First name' if 'First name' in new_df.columns else 'FIRST_NAME'
-                    l_col = 'Last name' if 'Last name' in new_df.columns else 'LAST_NAME'
-                    
-                    if f_col in new_df.columns and l_col in new_df.columns:
-                        new_df['full_name'] = (new_df[f_col].fillna('') + ' ' + new_df[l_col].fillna('')).str.lower().str.strip()
-                        new_df['full_name_rev'] = (new_df[l_col].fillna('') + ' ' + new_df[f_col].fillna('')).str.lower().str.strip()
-                    
-                    with REGISTRATIONS_LOCK:
-                        REGISTRATIONS_DF = new_df
-                    print(f"[REGISTRATIONS] Loaded {len(new_df)} registrations.")
+                    if new_df.empty:
+                        print("[REGISTRATIONS] Warning: Downloaded registry is empty. Keeping old data.")
+                    else:
+                        # Normalize columns to handle potential API changes
+                        new_df.columns = [c.strip() for c in new_df.columns]
+                        
+                        # Phone normalization (Njuko uses 'Telefono')
+                        phone_col = 'Telefono' if 'Telefono' in new_df.columns else 'PHONE'
+                        if phone_col in new_df.columns:
+                            new_df['norm_phone'] = new_df[phone_col].apply(normalize_phone)
+                        
+                        # Name normalization
+                        f_col = 'First name' if 'First name' in new_df.columns else 'FIRST_NAME'
+                        l_col = 'Last name' if 'Last name' in new_df.columns else 'LAST_NAME'
+                        
+                        if f_col in new_df.columns and l_col in new_df.columns:
+                            new_df['full_name'] = (new_df[f_col].fillna('') + ' ' + new_df[l_col].fillna('')).str.lower().str.strip()
+                            new_df['full_name_rev'] = (new_df[l_col].fillna('') + ' ' + new_df[f_col].fillna('')).str.lower().str.strip()
+                        
+                        with REGISTRATIONS_LOCK:
+                            REGISTRATIONS_DF = new_df
+                        last_loaded_mtime = file_mtime
+                        print(f"[REGISTRATIONS] Loaded {len(new_df)} registrations.")
             else:
                 print("[REGISTRATIONS] No local registry file found to load.")
 

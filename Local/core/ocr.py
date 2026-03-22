@@ -14,6 +14,7 @@ from google.genai import types
 # Initialize Gemini Client at module level
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+GEMINI_OCR_STRUCT_MODEL = os.getenv("GEMINI_OCR_STRUCT_MODEL", "gemini-2.5-flash-lite")
 
 DEFAULT_PARAMS = {
     'clahe_clip_limit': '2.0',
@@ -23,6 +24,9 @@ DEFAULT_PARAMS = {
     'tesseract_lang': 'spa',
     'save_intermediate_images': 'False'
 }
+
+def get_mistral_api_key():
+    return os.getenv("MISTRAL_API_KEY") or os.getenv("MISTRAL_API")
 
 def load_params(config_file_path):
     config = configparser.ConfigParser()
@@ -89,16 +93,20 @@ def run_mistral_ocr_pipeline(image_path: str):
     Uses Mistral for OCR and Gemini for structured extraction.
     Note: We use the mistralai library directly here.
     """
-    from mistralai import Mistral # Local import to keep it contained
-    
     print(f"[OCR] Attempting Mistral OCR pipeline for {image_path}")
-    mistral_api_key = os.getenv("MISTRAL_API_KEY")
+    mistral_api_key = get_mistral_api_key()
     if not mistral_api_key:
-        print("[OCR] Error: MISTRAL_API_KEY not set.")
+        print("[OCR] Error: MISTRAL_API_KEY/MISTRAL_API not set.")
         return None
 
     base64_image = encode_image_to_base64(image_path)
     if not base64_image:
+        return None
+
+    try:
+        from mistralai import Mistral # Local import to keep it contained
+    except Exception as e:
+        print(f"[OCR] Mistral SDK import error: {e}")
         return None
 
     try:
@@ -132,7 +140,7 @@ Texto del comprobante:
 {ocr_text}
 """
         response = gemini_client.models.generate_content(
-            model="gemini-flash-lite-latest",
+            model=GEMINI_OCR_STRUCT_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -145,7 +153,11 @@ Texto del comprobante:
 
 def process_receipt_image(image_path: str, original_filename: str) -> bool:
     print(f"[OCR] Processing OCR for: {original_filename}")
-    params = load_params("ocr_params.txt")
+    
+    # Use absolute path for params to ensure it's found
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    config_path = os.path.join(base_dir, "ocr_params.txt")
+    params = load_params(config_path)
 
     try:
         pil_image = Image.open(image_path)
@@ -154,7 +166,23 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
         preprocessed_cv_image = preprocess_image(cv_image, params)
         
         custom_tesseract_config = f'--psm {params["tesseract_psm"]}'
-        raw_text = pytesseract.image_to_string(preprocessed_cv_image, lang=params['tesseract_lang'], config=custom_tesseract_config)
+        raw_text = ""
+        preferred_lang = params.get('tesseract_lang', 'spa')
+
+        try:
+            raw_text = pytesseract.image_to_string(preprocessed_cv_image, lang=preferred_lang, config=custom_tesseract_config)
+        except pytesseract.TesseractError as e:
+            print(f"[OCR] Tesseract failed with lang='{preferred_lang}': {e}")
+            # Common failure on fresh systems: spa.traineddata missing.
+            # Retry with English so we can still parse numeric fields.
+            if preferred_lang != "eng":
+                try:
+                    print("[OCR] Retrying Tesseract with fallback lang='eng'...")
+                    raw_text = pytesseract.image_to_string(preprocessed_cv_image, lang='eng', config=custom_tesseract_config)
+                except Exception as fallback_error:
+                    print(f"[OCR] Fallback Tesseract OCR failed: {fallback_error}")
+        except Exception as e:
+            print(f"[OCR] Tesseract OCR error: {e}")
         
         banco, total, documento, fecha = "Not found", "Not found", "Not found", "Not found"
         lines = raw_text.split('\n')

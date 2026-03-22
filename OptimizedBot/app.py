@@ -10,56 +10,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Core modules
-from core.whatsapp import send_whatsapp_message, download_media, decrypt_and_save_media, normalize_phone
+from core.whatsapp import send_whatsapp_message, download_media, decrypt_and_save_media
 from core.knowledge import responder, client
 from core.registrations import update_registrations
 from core.database import (
     init_db, save_message, get_last_messages, 
     save_pending_confirmation, get_pending_confirmation, clear_pending_confirmation,
-    set_user_status, get_user_status, reset_user_status
+    set_user_status, get_user_status
 )
 
 app = Flask(__name__)
 
-# Inicializamos la base de datos aquí
+# Initialize database at import time as well (Gunicorn imports app module)
 init_db()
 
 _SYNC_THREAD_LOCK = threading.Lock()
 _SYNC_THREAD_STARTED = False
 _OCR_PROCESSOR = None
-
-def cleanup_old_media(max_age_days=7):
-    """Periodically cleans up the media folder to save space."""
-    import time
-    media_dir = 'media'
-    if not os.path.exists(media_dir):
-        return
-        
-    while True:
-        try:
-            now = time.time()
-            for filename in os.listdir(media_dir):
-                file_path = os.path.join(media_dir, filename)
-                if os.path.isfile(file_path):
-                    if os.stat(file_path).st_mtime < now - (max_age_days * 86400):
-                        os.remove(file_path)
-                        print(f"[APP] Cleaned up old media file: {filename}")
-        except Exception as e:
-            print(f"[APP] Error in media cleanup: {e}")
-        time.sleep(3600) # Run every hour
-
-def ensure_background_services():
-    global _SYNC_THREAD_STARTED
-    if _SYNC_THREAD_STARTED:
-        return
-    with _SYNC_THREAD_LOCK:
-        if _SYNC_THREAD_STARTED:
-            return
-        init_db()
-        threading.Thread(target=update_registrations, daemon=True, name="registrations-sync").start()
-        threading.Thread(target=cleanup_old_media, daemon=True, name="media-cleanup").start()
-        _SYNC_THREAD_STARTED = True
-        print("[APP] Background services initialized.")
 
 ADMIN_PHONE = os.getenv("ADMIN_PHONE")
 if not ADMIN_PHONE:
@@ -70,7 +37,18 @@ if not WEBHOOK_SECRET:
     print("[APP] WARNING: WEBHOOK_SECRET not set. Webhook endpoint is unauthenticated.")
 
 GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
-GEMINI_HELP_MODEL = os.getenv("GEMINI_HELP_MODEL", GEMINI_CLASSIFIER_MODEL)
+
+def ensure_background_services():
+    global _SYNC_THREAD_STARTED
+    if _SYNC_THREAD_STARTED:
+        return
+    with _SYNC_THREAD_LOCK:
+        if _SYNC_THREAD_STARTED:
+            return
+        init_db()
+        threading.Thread(target=update_registrations, daemon=True, name="registrations-sync").start()
+        _SYNC_THREAD_STARTED = True
+        print("[APP] Background services initialized.")
 
 def process_receipt_image_lazy(image_path, original_filename):
     global _OCR_PROCESSOR
@@ -144,6 +122,7 @@ def webhook():
         if isinstance(messages, list) and len(messages) > 0:
             message_container = messages[0]
         elif isinstance(messages, dict):
+            # Sometimes APIs return dicts with string indices "0", "1"...
             message_container = messages.get("0") or messages
         else:
             print(f"WEBHOOK: Unrecognized message structure in data['data']: {json.dumps(data.get('data'))}")
@@ -158,33 +137,12 @@ def webhook():
 
         # Handle users in 'ayuda' status (Human Takeover)
         user_status = get_user_status(sender)
-        incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
-        
-        # Admin Override: #resolver 123456789
-        if ADMIN_PHONE and sender.split('@')[0] in normalize_phone(ADMIN_PHONE):
-            if incoming_text.lower().startswith("#resolver"):
-                parts = incoming_text.split()
-                if len(parts) > 1:
-                    target_phone = normalize_phone(parts[1])
-                    target_jid = f"{target_phone}@s.whatsapp.net"
-                    reset_user_status(target_jid)
-                    send_whatsapp_message(sender, f"✅ Estado de {target_phone} reseteado a 'bot'.")
-                    send_whatsapp_message(target_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
-                    return jsonify({"status": "admin_reset_success"})
-
         if user_status == 'ayuda':
-            if incoming_text.lower() == "#bot":
-                reset_user_status(sender)
-                send_whatsapp_message(sender, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
-                return jsonify({"status": "user_reset_success"})
-
+            incoming_text = msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text")
             if incoming_text:
                 save_message(sender, "user", incoming_text)
                 if ADMIN_PHONE:
-                    push_name = message_container.get("pushName", "Desconocido")
-                    clean_sender = sender.split('@')[0]
-                    # Formato para los mensajes de seguimiento una vez que ya pidió ayuda
-                    admin_msg = f"💬 Mensaje de {push_name} ({clean_sender}):\n{incoming_text}"
+                    admin_msg = f"📩 AYUDA SOLICITADA:\nUsuario: {sender}\nMensaje: {incoming_text}"
                     if not send_whatsapp_message(ADMIN_PHONE, admin_msg):
                         return jsonify({"status": "admin_delivery_failed"}), 502
                 return jsonify({"status": "forwarded_to_admin"})
@@ -222,28 +180,13 @@ def webhook():
 
         save_message(sender, "user", incoming_text)
 
-        # 3. State Machine (Confirmations)
+        # 3. State Machine (Confirmations) - LOCAL PRE-PROCESSING
         pending = get_pending_confirmation(sender)
         if pending:
-            # Si estamos esperando un número de teléfono, capturamos el texto directamente
-            if pending['state'] == 'awaiting_phone_number':
-                user_phone = incoming_text.strip()
-                set_user_status(sender, 'ayuda')
-                
-                if ADMIN_PHONE:
-                    push_name = message_container.get("pushName", "Desconocido")
-                    clean_sender = sender.split('@')[0]
-                    admin_msg = f"🚨 NUEVA SOLICITUD DE AYUDA 🚨\n👤 Nombre: {push_name}\n📱 Número proporcionado: {user_phone}\n🔑 ID Oculto (LID): {clean_sender}"
-                    send_whatsapp_message(ADMIN_PHONE, admin_msg)
-                
-                send_whatsapp_message(sender, f"Gracias. Hemos registrado tu número: {user_phone}. Un representante de NaftaEC se comunicará contigo a la brevedad. A partir de ahora, tus mensajes serán leídos por un humano.")
-                clear_pending_confirmation(sender)
-                return jsonify({'status': 'phone_recorded_ayuda_active'})
-
-            # LOCAL PRE-PROCESSING (Save API calls for simple yes/no)
+            # Local Fuzzy Match (Save API calls for simple yes/no)
             classification = classify_confirmation_reply(incoming_text)
             if classification == 'unclear' and client:
-                # Only use AI if local matching is unclear
+                # Only if local matching fails, we use Gemini (1.5-flash is cheaper/more robust)
                 classify_prompt = f"Analiza el mensaje: '{incoming_text}'. El usuario está respondiendo a una confirmación. Responde ÚNICAMENTE: AFFIRMATIVE, NEGATIVE, o UNCLEAR."
                 try:
                     res = client.models.generate_content(model=GEMINI_CLASSIFIER_MODEL, contents=classify_prompt)
@@ -268,42 +211,33 @@ def webhook():
                     send_whatsapp_message(sender, "¡Excelente! Hemos validado tu comprobante. Pronto recibirás noticias nuestras.")
                     clear_pending_confirmation(sender)
                 elif pending['state'] == 'awaiting_ayuda_confirmation':
-                    save_pending_confirmation(sender, {**pending, "state": "awaiting_phone_number"})
-                    send_whatsapp_message(sender, "Para contactarte con el asesor envía tu número.")
-                    
+                    set_user_status(sender, 'ayuda')
+                    send_whatsapp_message(sender, "Entendido. He activado la atención personalizada. Tu siguiente mensaje será enviado directamente a un representante de NaftaEC.")
+                    clear_pending_confirmation(sender)
             elif 'negative' in classification:
-                if pending['state'] == 'awaiting_ayuda_confirmation':
-                    send_whatsapp_message(sender, "Entendido. Continuamos con el asistente virtual.")
-                else:
-                    send_whatsapp_message(sender, "Entendido. No realizaré más acciones con esta imagen.")
+                send_whatsapp_message(sender, "Entendido. No realizaré más acciones con esta imagen.")
                 clear_pending_confirmation(sender)
             else:
                 send_whatsapp_message(sender, "Por favor, responde 'sí' o 'no'.")
             return jsonify({'status': 'state_handled'})
 
-        # 4. Help Detection (Edge Case Catcher)
-        needs_help = False
-        if client:
-            try:
-                help_prompt = f"Determina si el siguiente mensaje indica que el usuario necesita ayuda humana, tiene un problema que el bot no puede resolver, o está frustrado: '{incoming_text}'. Responde ÚNICAMENTE: HELP o OK."
-                help_res = client.models.generate_content(model=GEMINI_HELP_MODEL, contents=help_prompt)
-                needs_help = 'help' in help_res.text.strip().lower()
-            except Exception as e:
-                print(f"[APP] Help detection failed, continuing without escalation: {e}")
-
-        if needs_help:
-            # Restauramos la confirmación original
+        # 4. General Query (Hybrid RAG + Registrations)
+        # Note: Help Detection is now merged into the main responder in knowledge.py
+        history = get_last_messages(sender, limit=20)
+        
+        # We now check if the response starts with a special [HELP_REQUESTED] flag
+        response = responder(incoming_text, sender_jid=sender, history=[(m['role'], m['content']) for m in history])
+        
+        if "[HELP_REQUESTED]" in response:
+            clean_msg = response.replace("[HELP_REQUESTED]", "").strip()
             save_pending_confirmation(sender, {
                 "message_id": message_id, "output_path": "", 
                 "original_filename": "", "state": "awaiting_ayuda_confirmation"
             })
-            if not send_whatsapp_message(sender, "¿Necesitas ayuda de un representante de NaftaEC? Por favor confirma si es así."):
+            if not send_whatsapp_message(sender, clean_msg or "¿Necesitas ayuda de un representante de NaftaEC? Por favor confirma si es así."):
                 return jsonify({"status": "delivery_failed", "stage": "help_confirmation"}), 502
             return jsonify({"status": "help_requested_confirmation_sent"})
 
-        # 5. General Query (Hybrid RAG + Registrations)
-        history = get_last_messages(sender, limit=20)
-        response = responder(incoming_text, sender_jid=sender, history=[(m['role'], m['content']) for m in history])
         save_message(sender, "assistant", response)
         if not send_whatsapp_message(sender, response):
             return jsonify({"status": "delivery_failed", "stage": "assistant_reply"}), 502
