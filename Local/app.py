@@ -67,8 +67,11 @@ if not ADMIN_PHONE:
     print("[APP] WARNING: ADMIN_PHONE not set. Ayuda status will not forward messages.")
 
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
-if not WEBHOOK_SECRET:
-    print("[APP] WARNING: WEBHOOK_SECRET not set. Webhook endpoint is unauthenticated.")
+ALLOW_UNAUTHENTICATED_WEBHOOK = os.getenv("ALLOW_UNAUTHENTICATED_WEBHOOK", "").strip().lower() in {"1", "true", "yes", "on"}
+if not WEBHOOK_SECRET and not ALLOW_UNAUTHENTICATED_WEBHOOK:
+    print("[APP] ERROR: WEBHOOK_SECRET not set. Webhook requests will be rejected until configured.")
+elif not WEBHOOK_SECRET:
+    print("[APP] WARNING: WEBHOOK_SECRET not set. ALLOW_UNAUTHENTICATED_WEBHOOK enabled for this environment.")
 
 GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
 GEMINI_HELP_MODEL = os.getenv("GEMINI_HELP_MODEL", "gemini-2.5-flash-lite")
@@ -107,7 +110,7 @@ def classify_confirmation_reply(text):
 
 def is_authorized_webhook(req):
     if not WEBHOOK_SECRET:
-        return True
+        return ALLOW_UNAUTHENTICATED_WEBHOOK
     provided_values = [
         req.headers.get("X-Webhook-Secret", ""),
         req.headers.get("X-Webhook-Token", ""),
@@ -120,6 +123,20 @@ def is_authorized_webhook(req):
         candidate and hmac.compare_digest(candidate.strip(), WEBHOOK_SECRET)
         for candidate in provided_values
     )
+
+def is_admin_sender(sender_jid):
+    if not ADMIN_PHONE or not sender_jid:
+        return False
+    sender_phone = normalize_phone(str(sender_jid).split("@")[0])
+    if not sender_phone:
+        return False
+    admin_numbers = {
+        normalize_phone(candidate)
+        for candidate in re.split(r"[,;\s]+", ADMIN_PHONE)
+        if candidate.strip()
+    }
+    admin_numbers.discard("")
+    return sender_phone in admin_numbers
 
 def format_ocr_data(data):
     return (
@@ -170,7 +187,7 @@ def webhook():
         incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
         
         # Admin Override
-        if ADMIN_PHONE and sender.split('@')[0] in normalize_phone(ADMIN_PHONE):
+        if is_admin_sender(sender):
             if incoming_text.lower().startswith("#resolver"):
                 parts = incoming_text.split()
                 if len(parts) > 1:
