@@ -175,8 +175,8 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
 
     # 4. Multi-Provider Fallback
     models_to_try = [
-        ("groq", GROQ_MODEL),
         ("gemini", GEMINI_RESPONSE_MODEL),
+        ("groq", GROQ_MODEL),
         ("openrouter", OPENROUTER_MODEL),
         ("mistral", MISTRAL_CHAT_MODEL)
     ]

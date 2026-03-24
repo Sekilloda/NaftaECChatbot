@@ -29,21 +29,26 @@ def download_report_logic():
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR, exist_ok=True)
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
         print(f"[REGISTRATIONS] Fetching export metadata from {NJUKO_API_URL}")
-        resp = requests.get(NJUKO_API_URL, timeout=30)
+        resp = requests.get(NJUKO_API_URL, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         
         s3_url = data.get("file")
         filename = data.get("filename", "njuko_export.xlsx")
+        num_results = data.get("numberOfResults", "unknown")
         
         if not s3_url:
             print("[REGISTRATIONS] No file URL found in API response.")
             return False
 
-        print(f"[REGISTRATIONS] Downloading registry file: {filename}")
-        report_resp = requests.get(s3_url, timeout=60)
+        print(f"[REGISTRATIONS] Downloading registry file: {filename} (Results: {num_results})")
+        report_resp = requests.get(s3_url, headers=headers, timeout=60)
         report_resp.raise_for_status()
         
         filepath = os.path.join(REPORT_DIR, "latest_registry.xlsx")
@@ -97,26 +102,55 @@ def update_registrations():
                     if new_df.empty:
                         print("[REGISTRATIONS] Warning: Downloaded registry is empty. Keeping old data.")
                     else:
-                        # Normalize columns to handle potential API changes
-                        new_df.columns = [c.strip() for c in new_df.columns]
+                        # Normalize column names for flexible detection
+                        cols = {c.strip(): c for c in new_df.columns}
+                        cols_lower = {c.lower().strip(): c for c in new_df.columns}
                         
-                        # Phone normalization (Njuko uses 'Telefono')
-                        phone_col = 'Telefono' if 'Telefono' in new_df.columns else 'PHONE'
+                        # Find Phone Column
+                        phone_col = (
+                            cols_lower.get('telefono') or 
+                            cols_lower.get('phone') or 
+                            cols_lower.get('celular') or 
+                            cols_lower.get('mobile') or
+                            'PHONE'
+                        )
                         if phone_col in new_df.columns:
                             new_df['norm_phone'] = new_df[phone_col].apply(normalize_phone)
                         
-                        # Name normalization
-                        f_col = 'First name' if 'First name' in new_df.columns else 'FIRST_NAME'
-                        l_col = 'Last name' if 'Last name' in new_df.columns else 'LAST_NAME'
+                        # Find Name Columns
+                        f_col = (
+                            cols_lower.get('first name') or 
+                            cols_lower.get('nombre') or 
+                            cols_lower.get('first_name') or
+                            'FIRST_NAME'
+                        )
+                        l_col = (
+                            cols_lower.get('last name') or 
+                            cols_lower.get('apellido') or 
+                            cols_lower.get('last_name') or
+                            'LAST_NAME'
+                        )
                         
                         if f_col in new_df.columns and l_col in new_df.columns:
                             new_df['full_name'] = (new_df[f_col].fillna('') + ' ' + new_df[l_col].fillna('')).str.lower().str.strip()
                             new_df['full_name_rev'] = (new_df[l_col].fillna('') + ' ' + new_df[f_col].fillna('')).str.lower().str.strip()
+                        elif f_col in new_df.columns: # Sometimes it's just one name column
+                             new_df['full_name'] = new_df[f_col].fillna('').str.lower().str.strip()
+                             new_df['full_name_rev'] = new_df['full_name']
+                        
+                        # Store identified columns for formatting
+                        new_df.attrs['mapped_cols'] = {
+                            'first_name': f_col,
+                            'last_name': l_col,
+                            'phone': phone_col,
+                            'competition': cols_lower.get('competition') or cols_lower.get('carrera') or cols_lower.get('race') or 'Competition',
+                            'cedula': cols_lower.get('cedula') or cols_lower.get('documento') or cols_lower.get('id') or 'Cedula'
+                        }
                         
                         with REGISTRATIONS_LOCK:
                             REGISTRATIONS_DF = new_df
                         last_loaded_mtime = file_mtime
-                        print(f"[REGISTRATIONS] Loaded {len(new_df)} registrations.")
+                        print(f"[REGISTRATIONS] Loaded {len(new_df)} registrations. (Columns mapped: {new_df.attrs['mapped_cols']})")
             else:
                 print("[REGISTRATIONS] No local registry file found to load.")
 
@@ -126,13 +160,22 @@ def update_registrations():
         time.sleep(60) # Wake up every minute to check freshness
 
 def format_user_data(row):
-    """Helper to turn a dataframe row into a readable string."""
-    f_name = row.get('First name') or row.get('First Name') or ""
-    l_name = row.get('Last name') or row.get('Last Name') or ""
-    race = row.get('Competition') or row.get('Race') or "N/A"
-    dist = row.get('Competition') or row.get('Event') or "N/A" # In Njuko, Competition often includes distance
+    """Helper to turn a dataframe row into a readable string using mapped columns if available."""
+    # Attempt to get mapped columns from the dataframe attributes
+    mapped = {}
+    if REGISTRATIONS_DF is not None and hasattr(REGISTRATIONS_DF, 'attrs'):
+        mapped = REGISTRATIONS_DF.attrs.get('mapped_cols', {})
+
+    f_col = mapped.get('first_name', 'First name')
+    l_col = mapped.get('last_name', 'Last name')
+    race_col = mapped.get('competition', 'Competition')
+    id_col = mapped.get('cedula', 'Cedula')
+
+    f_name = row.get(f_col) or row.get('First Name') or ""
+    l_name = row.get(l_col) or row.get('Last Name') or ""
+    race = row.get(race_col) or row.get('Race') or "N/A"
     status = "Confirmado" # Njuko export is usually of confirmed entries
-    cedula = row.get('Cedula') or "N/A"
+    cedula = row.get(id_col) or row.get('Documento') or "N/A"
     
     return (
         f"Nombre: {f_name} {l_name}. "
