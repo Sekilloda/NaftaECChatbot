@@ -173,53 +173,29 @@ def call_mistral_chat(prompt, model_id, temperature=1.0):
 
 
 def call_ai_fallback(prompt, response_mime_type="text/plain", temperature=1.0):
-    """Multi-model fallback for simulation tasks."""
+    """Simplified Gemini-only call for simulation tasks."""
+    if not client:
+        return None
+    try:
+        print(f"  [SIM] Calling Gemini: {GEMINI_SIM_MODEL}")
+        config = types.GenerateContentConfig(temperature=temperature)
+        if response_mime_type == "application/json":
+            config.response_mime_type = "application/json"
+        res = client.models.generate_content(model=GEMINI_SIM_MODEL, contents=prompt, config=config)
+        return res.text
+    except Exception as e:
+        print(f"  [SIM-ERROR] Gemini failed: {e}")
+        return None
+
+# Legacy multi-provider fallback (Commented out for preDeployment)
+"""
+def call_ai_fallback_old(prompt, response_mime_type="text/plain", temperature=1.0):
     models_to_try = [
         ("groq", "llama-3.1-8b-instant"),
-        ("gemini", GEMINI_SIM_MODEL),
-        ("openrouter", "meta-llama/llama-3.1-8b-instruct:free"),
-        ("mistral", "mistral-small-latest"),
+        ...
     ]
-
-    for provider, model_id in models_to_try:
-        try:
-            if provider == "groq" and GROQ_API_KEY:
-                res = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-                    json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "temperature": temperature},
-                    timeout=30,
-                )
-                res.raise_for_status()
-                return res.json()["choices"][0]["message"]["content"]
-
-            if provider == "gemini" and client:
-                config = types.GenerateContentConfig(temperature=temperature)
-                if response_mime_type == "application/json":
-                    config.response_mime_type = "application/json"
-                res = client.models.generate_content(model=model_id, contents=prompt, config=config)
-                return res.text
-
-            if provider == "openrouter" and OPENROUTER_API_KEY:
-                res = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
-                    json={"model": model_id, "messages": [{"role": "user", "content": prompt}]},
-                    timeout=30,
-                )
-                res.raise_for_status()
-                return res.json()["choices"][0]["message"]["content"]
-
-            if provider == "mistral" and MISTRAL_API_KEY:
-                return call_mistral_chat(prompt, model_id, temperature=temperature)
-
-        except Exception as e:
-            if any(err in str(e).lower() for err in ["429", "quota", "resource_exhausted"]):
-                print(f"  [SIM-FALLBACK] {provider}/{model_id} hit limit. Trying next...")
-                continue
-            print(f"  [SIM-ERROR] {provider}/{model_id} failed: {e}")
-
-    return None
+    ...
+"""
 
 
 def generate_personas(count=5):

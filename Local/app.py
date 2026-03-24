@@ -69,8 +69,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
 if not WEBHOOK_SECRET:
     print("[APP] WARNING: WEBHOOK_SECRET not set. Webhook endpoint is unauthenticated.")
 
-GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.0-flash-lite")
-GEMINI_HELP_MODEL = os.getenv("GEMINI_HELP_MODEL", GEMINI_CLASSIFIER_MODEL)
+GEMINI_CLASSIFIER_MODEL = os.getenv("GEMINI_CLASSIFIER_MODEL", "gemini-2.5-flash-lite")
+GEMINI_HELP_MODEL = os.getenv("GEMINI_HELP_MODEL", "gemini-2.5-flash-lite")
 
 def process_receipt_image_lazy(image_path, original_filename):
     global _OCR_PROCESSOR

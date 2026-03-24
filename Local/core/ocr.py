@@ -14,7 +14,7 @@ from google.genai import types
 # Initialize Gemini Client at module level
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-GEMINI_OCR_STRUCT_MODEL = os.getenv("GEMINI_OCR_STRUCT_MODEL", "gemini-2.5-flash-lite")
+GEMINI_OCR_STRUCT_MODEL = os.getenv("GEMINI_OCR_STRUCT_MODEL", "gemini-2.5-flash")
 
 DEFAULT_PARAMS = {
     'clahe_clip_limit': '2.0',
@@ -202,15 +202,30 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
                 match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", line)
                 if match: fecha = match.group(1)
 
-        # Mistral Fallback
-        if any(val == "Not found" for val in [banco, total, documento, fecha]):
-            print("[OCR] Fallback: Attempting Mistral OCR.")
-            mistral_data = run_mistral_ocr_pipeline(image_path)
-            if mistral_data:
-                if banco == "Not found" and mistral_data.get('banco') != "N/A": banco = mistral_data['banco']
-                if total == "Not found" and mistral_data.get('monto') != "N/A": total = mistral_data['monto']
-                if documento == "Not found" and mistral_data.get('numero_transaccion') != "N/A": documento = mistral_data['numero_transaccion']
-                if fecha == "Not found" and mistral_data.get('fecha') != "N/A": fecha = mistral_data['fecha']
+        # Gemini-Refinement (Vision-capable model fallback/refinement)
+        if any(val == "Not found" for val in [banco, total, documento, fecha]) and gemini_client:
+            print(f"[OCR] Refining data with Gemini ({GEMINI_OCR_STRUCT_MODEL})...")
+            try:
+                # We can send the raw text first for quick structured refinement
+                prompt = f"""
+                Analiza el siguiente texto extraído de un comprobante bancario y devuelve un JSON estructurado.
+                Campos: banco, monto, numero_transaccion, fecha.
+                Si no encuentras un campo, usa "Not found".
+                Texto:
+                {raw_text}
+                """
+                res = gemini_client.models.generate_content(
+                    model=GEMINI_OCR_STRUCT_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json")
+                )
+                gemini_data = json.loads(res.text)
+                if banco == "Not found": banco = gemini_data.get('banco', "Not found")
+                if total == "Not found": total = gemini_data.get('monto', "Not found")
+                if documento == "Not found": documento = gemini_data.get('numero_transaccion', "Not found")
+                if fecha == "Not found": fecha = gemini_data.get('fecha', "Not found")
+            except Exception as ge:
+                print(f"[OCR] Gemini refinement failed: {ge}")
 
         parsed_info = [f"Banco: {banco}", f"Total: {total}", f"Documento: {documento}", f"Fecha: {fecha}"]
         

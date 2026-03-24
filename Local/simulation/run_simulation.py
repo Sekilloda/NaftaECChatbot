@@ -208,98 +208,29 @@ def init_sim_db():
         conn.close()
 
 def call_ai_fallback(prompt, response_mime_type="text/plain", temperature=1.0):
-    """Multi-model fallback for simulation tasks."""
+    """Simplified Gemini-only call for simulation tasks."""
+    if not client:
+        return None
+    try:
+        print(f"  [SIM] Calling Gemini: {GEMINI_SIM_MODEL}")
+        config = types.GenerateContentConfig(temperature=temperature)
+        if response_mime_type == "application/json":
+            config.response_mime_type = "application/json"
+        res = client.models.generate_content(model=GEMINI_SIM_MODEL, contents=prompt, config=config)
+        return res.text
+    except Exception as e:
+        print(f"  [SIM-ERROR] Gemini failed: {e}")
+        return None
+
+# Legacy multi-provider fallback (Commented out for preDeployment)
+"""
+def call_ai_fallback_old(prompt, response_mime_type="text/plain", temperature=1.0):
     models_to_try = [
         ("groq", "llama-3.1-8b-instant"),
-        ("gemini", GEMINI_SIM_MODEL),
-        ("openrouter", "google/gemma-2-9b-it:free"),
-        ("mistral", "mistral-small-latest"),
+        ...
     ]
-
-    for provider, model_id in models_to_try:
-        try:
-            if provider == "groq" and GROQ_API_KEY:
-                print(f"  [SIM-FALLBACK] Trying {provider}/{model_id}...")
-                res = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "temperature": temperature},
-                    timeout=30,
-                )
-                res.raise_for_status()
-                return res.json()["choices"][0]["message"]["content"]
-
-            if provider == "gemini" and client:
-                print(f"  [SIM-FALLBACK] Trying {provider}/{model_id}...")
-                config = types.GenerateContentConfig(temperature=temperature)
-                if response_mime_type == "application/json":
-                    config.response_mime_type = "application/json"
-                res = client.models.generate_content(model=model_id, contents=prompt, config=config)
-                return res.text
-
-            if provider == "openrouter" and OPENROUTER_API_KEY:
-                or_models = [model_id, "minimax/minimax-m2.5:free", "nvidia/nemotron-3-nano-30b-a3b:free", "nvidia/nemotron-3-super-120b-a12b:free", "meta-llama/llama-3.2-1b-instruct:free"]
-                for or_model in or_models:
-                    try:
-                        print(f"  [SIM-FALLBACK] Trying {provider}/{or_model}...")
-                        res = requests.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers={
-                                "Authorization": f"Bearer {OPENROUTER_API_KEY}", 
-                                "Content-Type": "application/json",
-                                "HTTP-Referer": "https://github.com/NaftaEC",
-                                "X-Title": "NaftaEC Simulation"
-                            },
-                            json={"model": or_model, "messages": [{"role": "user", "content": prompt}]},
-                            timeout=30,
-                        )
-                        res.raise_for_status()
-                        return res.json()["choices"][0]["message"]["content"]
-                    except Exception as or_e:
-                        print(f"  [SIM-ERROR] OpenRouter {or_model} failed: {or_e}")
-                        continue
-                continue
-
-            if provider == "mistral" and MISTRAL_API_KEY:
-                # If the key is actually a Hugging Face token, use HF Inference API
-                if str(MISTRAL_API_KEY).startswith("hf_"):
-                    hf_models = ["meta-llama/Llama-3.2-1B-Instruct", "mistralai/Mistral-7B-Instruct-v0.2", "HuggingFaceH4/zephyr-7b-beta"]
-                    for hf_model in hf_models:
-                        try:
-                            print(f"  [SIM-FALLBACK] Using HF Inference API for: {hf_model}")
-                            hf_url = f"https://api-inference.huggingface.co/models/{hf_model}"
-                            res = requests.post(
-                                hf_url,
-                                headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-                                json={"inputs": prompt, "parameters": {"max_new_tokens": 512, "temperature": temperature}},
-                                timeout=30
-                            )
-                            res.raise_for_status()
-                            out = res.json()
-                            if isinstance(out, list): out = out[0]
-                            content = out.get("generated_text", str(out))
-                            if prompt in content: content = content.replace(prompt, "")
-                            return content.strip()
-                        except Exception as hf_e:
-                            print(f"  [SIM-ERROR] HF Model {hf_model} failed: {hf_e}")
-                            continue
-                    continue
-
-                print(f"  [SIM-FALLBACK] Trying {provider}/{model_id}...")
-                res = requests.post(
-                    "https://api.mistral.ai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": model_id, "messages": [{"role": "user", "content": prompt}], "temperature": temperature},
-                    timeout=30,
-                )
-                res.raise_for_status()
-                return res.json()["choices"][0]["message"]["content"]
-
-        except Exception as e:
-            if any(err in str(e).lower() for err in ["429", "quota", "resource_exhausted"]):
-                print(f"  [SIM-FALLBACK] {provider}/{model_id} hit limit. Trying next...")
-                continue
-            print(f"  [SIM-ERROR] {provider}/{model_id} failed: {e}")
+    ...
+"""
 
     return None
 
