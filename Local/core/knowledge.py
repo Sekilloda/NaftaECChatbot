@@ -5,7 +5,6 @@ import requests
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 from google import genai
 from google.genai import types
 from huggingface_hub import login

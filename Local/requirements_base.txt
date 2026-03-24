@@ -3,13 +3,11 @@ python-dotenv
 requests
 google-genai
 sentence-transformers
-scikit-learn
 pycryptodome
 Pillow
 pytesseract
-opencv-python
+opencv-python-headless
 pandas
 openpyxl
-mistralai
 huggingface_hub
 numpy==1.26.4
