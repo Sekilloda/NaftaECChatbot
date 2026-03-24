@@ -6,6 +6,7 @@ import pytesseract
 import base64
 import json
 import platform
+import time
 from PIL import Image
 import configparser
 from google import genai
@@ -88,73 +89,12 @@ def encode_image_to_base64(image_path):
         print(f"[OCR] Error encoding image: {e}")
         return None
 
-def run_mistral_ocr_pipeline(image_path: str):
+def process_receipt_image(image_path: str, original_filename: str) -> dict:
     """
-    Uses Mistral for OCR and Gemini for structured extraction.
-    Note: We use the mistralai library directly here.
+    Returns a dictionary of extracted fields or None if failed.
     """
-    print(f"[OCR] Attempting Mistral OCR pipeline for {image_path}")
-    mistral_api_key = get_mistral_api_key()
-    if not mistral_api_key:
-        print("[OCR] Error: MISTRAL_API_KEY/MISTRAL_API not set.")
-        return None
-
-    base64_image = encode_image_to_base64(image_path)
-    if not base64_image:
-        return None
-
-    try:
-        from mistralai import Mistral # Local import to keep it contained
-    except Exception as e:
-        print(f"[OCR] Mistral SDK import error: {e}")
-        return None
-
-    try:
-        client = Mistral(api_key=mistral_api_key)
-        ocr_response = client.ocr.process(
-            model="mistral-ocr-2503",
-            document={
-                "type": "image_url",
-                "image_url": f"data:image/jpeg;base64,{base64_image}"
-            }
-        )
-        ocr_text = ocr_response.pages[0].markdown
-    except Exception as e:
-        print(f"[OCR] Mistral OCR Error: {e}")
-        return None
-
-    if not gemini_client:
-        print("[OCR] Gemini client not initialized. Cannot perform extraction.")
-        return None
-
-    try:
-        prompt = f"""
-Extrae la siguiente información del texto de un comprobante bancario en formato JSON.
-REGLAS:
-1. Extrae: 'banco', 'monto', 'numero_transaccion', 'fecha'.
-2. Si un campo no se encuentra, usa 'N/A'.
-3. Para 'monto', usa punto decimal (ej: 123.45).
-4. Para 'fecha', normaliza a DD/MM/YYYY.
-
-Texto del comprobante:
-{ocr_text}
-"""
-        response = gemini_client.models.generate_content(
-            model=GEMINI_OCR_STRUCT_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        print(f"[OCR] Data extraction error: {e}")
-        return None
-
-def process_receipt_image(image_path: str, original_filename: str) -> bool:
     print(f"[OCR] Processing OCR for: {original_filename}")
     
-    # Use absolute path for params to ensure it's found
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     config_path = os.path.join(base_dir, "ocr_params.txt")
     params = load_params(config_path)
@@ -171,72 +111,90 @@ def process_receipt_image(image_path: str, original_filename: str) -> bool:
 
         try:
             raw_text = pytesseract.image_to_string(preprocessed_cv_image, lang=preferred_lang, config=custom_tesseract_config)
-        except pytesseract.TesseractError as e:
-            print(f"[OCR] Tesseract failed with lang='{preferred_lang}': {e}")
-            # Common failure on fresh systems: spa.traineddata missing.
-            # Retry with English so we can still parse numeric fields.
-            if preferred_lang != "eng":
-                try:
-                    print("[OCR] Retrying Tesseract with fallback lang='eng'...")
-                    raw_text = pytesseract.image_to_string(preprocessed_cv_image, lang='eng', config=custom_tesseract_config)
-                except Exception as fallback_error:
-                    print(f"[OCR] Fallback Tesseract OCR failed: {fallback_error}")
         except Exception as e:
             print(f"[OCR] Tesseract OCR error: {e}")
         
-        banco, total, documento, fecha = "Not found", "Not found", "Not found", "Not found"
-        lines = raw_text.split('\n')
+        # Initial empty fields
+        data = {
+            "banco": "",
+            "monto": "",
+            "fecha": "",
+            "numero_comprobante": "",
+            "cuenta_origen": ""
+        }
 
-        # Tesseract Basic Extraction
+        # Tesseract Basic Extraction (RegEx)
+        lines = raw_text.split('\n')
         for line in lines:
-            if re.search(r"(?i)BANCO", line):
-                match = re.search(r"(?i)BANCO\s*[:\-]?\s*(.*)", line)
-                if match: banco = match.group(1).strip()
-            if re.search(r"(?i)Documento|Referencia", line):
-                nums = re.findall(r'\d+', line)
-                if nums: documento = str(max(int(n) for n in nums))
-            if re.search(r"(?i)Total|Monto", line):
-                match = re.search(r"([\d]+[\.,][\d]{2})", line)
-                if match: total = match.group(1).replace(',', '.')
-            if re.search(r"(?i)Fecha", line):
-                match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", line)
-                if match: fecha = match.group(1)
+            line_clean = line.strip()
+            if not line_clean: continue
+            
+            if not data["banco"] and re.search(r"(?i)BANCO", line_clean):
+                match = re.search(r"(?i)BANCO\s*[:\-]?\s*(.*)", line_clean)
+                if match: data["banco"] = match.group(1).strip()
+            
+            if not data["numero_comprobante"] and re.search(r"(?i)Documento|Referencia|Comprobante|Transacc", line_clean):
+                nums = re.findall(r'\d{4,}', line_clean)
+                if nums: data["numero_comprobante"] = str(max(nums, key=len))
+            
+            if not data["monto"] and re.search(r"(?i)Total|Monto|Valor|Importe", line_clean):
+                match = re.search(r"([\d]+[\.,][\d]{2})", line_clean)
+                if match: data["monto"] = match.group(1).replace(',', '.')
+            
+            if not data["fecha"] and re.search(r"(?i)Fecha", line_clean):
+                match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", line_clean)
+                if match: data["fecha"] = match.group(1)
 
         # Gemini-Refinement (Vision-capable model fallback/refinement)
-        if any(val == "Not found" for val in [banco, total, documento, fecha]) and gemini_client:
+        if gemini_client:
             print(f"[OCR] Refining data with Gemini ({GEMINI_OCR_STRUCT_MODEL})...")
             try:
                 # We can send the raw text first for quick structured refinement
                 prompt = f"""
                 Analiza el siguiente texto extraído de un comprobante bancario y devuelve un JSON estructurado.
-                Campos: banco, monto, numero_transaccion, fecha.
-                Si no encuentras un campo, usa "Not found".
+                Campos requeridos: banco, monto, numero_comprobante, fecha, cuenta_origen.
+                
+                REGLAS:
+                1. 'monto' debe ser numérico con punto decimal.
+                2. 'fecha' debe ser DD/MM/YYYY.
+                3. 'numero_comprobante' es el número de referencia o transacción.
+                4. 'cuenta_origen' es el número de cuenta de donde sale el dinero.
+                5. Si no encuentras un campo, usa una cadena vacía "".
+                
                 Texto:
                 {raw_text}
                 """
-                res = gemini_client.models.generate_content(
-                    model=GEMINI_OCR_STRUCT_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(response_mime_type="application/json")
-                )
-                gemini_data = json.loads(res.text)
-                if banco == "Not found": banco = gemini_data.get('banco', "Not found")
-                if total == "Not found": total = gemini_data.get('monto', "Not found")
-                if documento == "Not found": documento = gemini_data.get('numero_transaccion', "Not found")
-                if fecha == "Not found": fecha = gemini_data.get('fecha', "Not found")
+                # Retry loop for Gemini refinement
+                res = None
+                for attempt in range(3):
+                    try:
+                        res = gemini_client.models.generate_content(
+                            model=GEMINI_OCR_STRUCT_MODEL,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(response_mime_type="application/json")
+                        )
+                        break
+                    except Exception as e:
+                        if "429" in str(e) and attempt < 2:
+                            print(f"[OCR] Rate limited (429). Retrying in 20s... (Attempt {attempt+1}/3)")
+                            time.sleep(20)
+                        else:
+                            raise e
+                
+                if res:
+                    gemini_data = json.loads(res.text)
+                    # Update if empty or refine
+                    for key in data:
+                        if not data[key] or data[key] == "":
+                            val = gemini_data.get(key, "")
+                            if val and val != "Not found":
+                                data[key] = str(val)
             except Exception as ge:
                 print(f"[OCR] Gemini refinement failed: {ge}")
 
-        parsed_info = [f"Banco: {banco}", f"Total: {total}", f"Documento: {documento}", f"Fecha: {fecha}"]
-        
-        output_dir = os.path.dirname(image_path)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-
-        output_txt_path = os.path.join(output_dir, os.path.splitext(original_filename)[0] + ".txt")
-        with open(output_txt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(parsed_info))
-        return True
+        # Final sanity check for mandatory fields as per user request
+        # (leave empty if not found, but we ensure they are present in the dict)
+        return data
     except Exception as e:
-        print(f"[OCR] Error: {e}")
-        return False
+        print(f"[OCR] Error in process_receipt_image: {e}")
+        return None

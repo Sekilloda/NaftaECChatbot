@@ -195,13 +195,8 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         ("openrouter", OPENROUTER_MODEL),
         ("mistral", MISTRAL_CHAT_MODEL)
     ]
-    ... [rest of fallback logic] ...
+    # ... rest of fallback logic preserved for easy restoration
     """
-        except Exception as e:
-            if any(err in str(e).lower() for err in ["429", "quota", "resource_exhausted"]):
-                print(f"[KNOWLEDGE] Rate limit hit for {provider}/{model_id}. Trying next...")
-                continue
-            print(f"[KNOWLEDGE] Error with {provider}/{model_id}: {e}")
 
     # 5. Smart Fallback (if all AI providers failed)
     if needs_human:

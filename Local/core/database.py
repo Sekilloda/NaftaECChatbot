@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 
 DB_PATH = "chat_history.db"
 
@@ -21,6 +22,7 @@ def init_db():
                     output_path TEXT,
                     original_filename TEXT,
                     state TEXT,
+                    metadata TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS user_status (
@@ -35,7 +37,23 @@ def init_db():
                     content TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS validated_registries (
+                    unique_id TEXT PRIMARY KEY,
+                    sender_jid TEXT,
+                    cedula TEXT,
+                    banco TEXT,
+                    monto TEXT,
+                    fecha TEXT,
+                    numero_comprobante TEXT,
+                    cuenta_origen TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
             """)
+            # Migration: Add metadata column if it doesn't exist
+            try:
+                conn.execute("ALTER TABLE pending_confirmations ADD COLUMN metadata TEXT")
+            except sqlite3.OperationalError:
+                pass # Already exists
     finally:
         conn.close()
 
@@ -62,11 +80,12 @@ def get_user_status(sender_jid):
 def save_pending_confirmation(sender_jid, data):
     conn = get_db_connection()
     try:
+        metadata_json = json.dumps(data.get('metadata', {}))
         with conn:
             conn.execute("""
-                INSERT OR REPLACE INTO pending_confirmations (sender_jid, message_id, output_path, original_filename, state)
-                VALUES (?, ?, ?, ?, ?)
-            """, (sender_jid, data['message_id'], data['output_path'], data['original_filename'], data.get('state', 'awaiting_confirmation')))
+                INSERT OR REPLACE INTO pending_confirmations (sender_jid, message_id, output_path, original_filename, state, metadata)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (sender_jid, data['message_id'], data['output_path'], data['original_filename'], data.get('state', 'awaiting_confirmation'), metadata_json))
     finally:
         conn.close()
 
@@ -74,7 +93,14 @@ def get_pending_confirmation(sender_jid):
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT * FROM pending_confirmations WHERE sender_jid = ?", (sender_jid,)).fetchone()
-        return dict(row) if row else None
+        if row:
+            d = dict(row)
+            try:
+                d['metadata'] = json.loads(d['metadata']) if d.get('metadata') else {}
+            except Exception:
+                d['metadata'] = {}
+            return d
+        return None
     finally:
         conn.close()
 
@@ -84,6 +110,26 @@ def clear_pending_confirmation(sender_jid):
         with conn:
             cursor = conn.execute("DELETE FROM pending_confirmations WHERE sender_jid = ?", (sender_jid,))
             return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+def save_validated_registry(registry_data):
+    conn = get_db_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO validated_registries (unique_id, sender_jid, cedula, banco, monto, fecha, numero_comprobante, cuenta_origen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                registry_data['unique_id'], 
+                registry_data['sender_jid'], 
+                registry_data['cedula'], 
+                registry_data['banco'], 
+                registry_data['monto'], 
+                registry_data['fecha'], 
+                registry_data['numero_comprobante'], 
+                registry_data['cuenta_origen']
+            ))
     finally:
         conn.close()
 

@@ -9,8 +9,8 @@
 **/test
 # Ignore cache
 **/__pycache__
-# Ignore internal json files
-**/*.json
+# Ignore json files in Local directory
+Local/*.json
 # Ignore databases
 **/*.db
 # Ignore reports
