@@ -14,7 +14,16 @@ import core.database as db
 class TestOCRStateMachine(unittest.TestCase):
     def setUp(self):
         self.client = app.test_client()
-        # Mock database to avoid side effects
+        # Mock database/runtime helpers to avoid side effects.
+        self.bg_patcher = patch('app.ensure_background_services')
+        self.bg_patcher.start()
+
+        self.user_status_patcher = patch('app.get_user_status', return_value='bot')
+        self.user_status_patcher.start()
+
+        self.save_message_patcher = patch('app.save_message')
+        self.save_message_patcher.start()
+
         self.db_patcher = patch('app.get_pending_confirmation')
         self.mock_get_pending = self.db_patcher.start()
         

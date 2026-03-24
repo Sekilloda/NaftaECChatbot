@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import re
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -63,43 +64,45 @@ def run_benchmark():
 
         image_path = os.path.join(RECEIPTS_DIR, filename)
         print(f"Processing {filename}...", end=" ", flush=True)
-        
+
         actual = process_receipt_image(image_path, filename)
-        
+
         if actual:
             print("Done.")
-            # ... rest of logic
-        
-        time.sleep(15) # Delay to prevent rate limiting
-            comparison = {
-                "banco": (normalize_value(expected.get("banco_origen")), normalize_value(actual.get("banco"))),
-                "monto": (normalize_value(expected.get("monto")), normalize_value(actual.get("monto"))),
-                "fecha": (normalize_date(expected.get("fecha")), normalize_date(actual.get("fecha"))),
-                "numero_comprobante": (normalize_value(expected.get("numero_comprobante")), normalize_value(actual.get("numero_comprobante"))),
-                "cuenta_origen": (normalize_value(expected.get("cuenta_origen")), normalize_value(actual.get("cuenta_origen")))
-            }
-
-            match_row = {"filename": filename}
-            for field, (exp_val, act_val) in comparison.items():
-                is_correct = False
-                if not exp_val and not act_val:
-                    is_correct = True
-                elif exp_val and act_val:
-                    # Partial match for banco or exact for others
-                    if field == "banco":
-                        is_correct = exp_val in act_val or act_val in exp_val
-                    else:
-                        is_correct = exp_val == act_val
-                
-                metrics[field]["total"] += 1
-                if is_correct:
-                    metrics[field]["correct"] += 1
-                
-                match_row[field] = "PASS" if is_correct else f"FAIL (Exp: {exp_val}, Act: {act_val})"
-            
-            results.append(match_row)
         else:
             print("FAILED OCR.")
+            actual = {}
+
+        comparison = {
+            "banco": (normalize_value(expected.get("banco_origen")), normalize_value(actual.get("banco"))),
+            "monto": (normalize_value(expected.get("monto")), normalize_value(actual.get("monto"))),
+            "fecha": (normalize_date(expected.get("fecha")), normalize_date(actual.get("fecha"))),
+            "numero_comprobante": (normalize_value(expected.get("numero_comprobante")), normalize_value(actual.get("numero_comprobante"))),
+            "cuenta_origen": (normalize_value(expected.get("cuenta_origen")), normalize_value(actual.get("cuenta_origen")))
+        }
+
+        match_row = {"filename": filename}
+        for field, (exp_val, act_val) in comparison.items():
+            is_correct = False
+            if not exp_val and not act_val:
+                is_correct = True
+            elif exp_val and act_val:
+                # Partial match for banco or exact for others
+                if field == "banco":
+                    is_correct = exp_val in act_val or act_val in exp_val
+                else:
+                    is_correct = exp_val == act_val
+
+            metrics[field]["total"] += 1
+            if is_correct:
+                metrics[field]["correct"] += 1
+
+            match_row[field] = "PASS" if is_correct else f"FAIL (Exp: {exp_val}, Act: {act_val})"
+
+        results.append(match_row)
+
+        # Delay between requests to reduce upstream rate limiting pressure.
+        time.sleep(15)
 
     print("\n" + "="*50)
     print("OCR ACCURACY REPORT")
