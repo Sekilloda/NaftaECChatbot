@@ -76,20 +76,30 @@ def send_whatsapp_message(recipient, text):
         print("[WHATSAPP] Cannot send message: WASENDER_API_TOKEN is missing.")
         return False
         
-    # Remove @s.whatsapp.net if present and normalize to digits only
-    clean_recipient = recipient.split("@")[0]
-    normalized_recipient = normalize_phone(clean_recipient)
+    # WASender usually requires the full JID (number@s.whatsapp.net)
+    # We normalize to ensure we have just the digits followed by the suffix
+    clean_recipient = str(recipient).split("@")[0]
+    normalized_recipient = "".join(filter(str.isdigit, clean_recipient))
     
-    payload = {"to": normalized_recipient, "text": text}
+    if not normalized_recipient:
+        print(f"[WHATSAPP] Error: Invalid recipient '{recipient}'")
+        return False
+
+    full_jid = f"{normalized_recipient}@s.whatsapp.net"
+    
+    payload = {"to": full_jid, "text": text}
     headers = {
         "Authorization": f"Bearer {WASENDER_API_TOKEN}",
         "Content-Type": "application/json"
     }
     try:
+        print(f"[WHATSAPP] Sending message to {full_jid}...")
         response = requests.post(WASENDER_API_URL, json=payload, headers=headers, timeout=10)
         if not response.ok:
-            print(f"[WHATSAPP] Failed to send message to {normalized_recipient}: {response.text}")
+            print(f"[WHATSAPP] Failed to send message to {full_jid}: {response.status_code} - {response.text}")
+        else:
+            print(f"[WHATSAPP] Message sent successfully to {full_jid}")
         return response.ok
     except requests.exceptions.RequestException as e:
-        print(f"[WHATSAPP] Error sending message: {e}")
+        print(f"[WHATSAPP] Error sending message to {full_jid}: {e}")
         return False
