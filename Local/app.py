@@ -30,18 +30,22 @@ _SYNC_THREAD_LOCK = threading.Lock()
 _SYNC_THREAD_STARTED = False
 _OCR_PROCESSOR = None
 
+# Support for persistent storage on Render
+DATA_DIR = os.getenv("PERSISTENT_STORAGE_PATH", os.path.dirname(os.path.abspath(__file__)))
+MEDIA_DIR = os.path.join(DATA_DIR, 'media')
+os.makedirs(MEDIA_DIR, exist_ok=True)
+
 def cleanup_old_media(max_age_days=7):
     """Periodically cleans up the media folder to save space."""
     import time
-    media_dir = 'media'
-    if not os.path.exists(media_dir):
+    if not os.path.exists(MEDIA_DIR):
         return
         
     while True:
         try:
             now = time.time()
-            for filename in os.listdir(media_dir):
-                file_path = os.path.join(media_dir, filename)
+            for filename in os.listdir(MEDIA_DIR):
+                file_path = os.path.join(MEDIA_DIR, filename)
                 if os.path.isfile(file_path):
                     if os.stat(file_path).st_mtime < now - (max_age_days * 86400):
                         os.remove(file_path)
@@ -347,7 +351,7 @@ def webhook():
             media_info = msg_content.get(f'{media_type}Message')
             media_key, media_url = media_info.get('mediaKey'), media_info.get('url')
             if media_key and media_url:
-                output_path = os.path.join('media', f'{message_id}{ext}')
+                output_path = os.path.join(MEDIA_DIR, f'{message_id}{ext}')
                 encrypted_data = download_media(media_url)
                 if encrypted_data and decrypt_and_save_media(media_key, encrypted_data, output_path, media_type):
                     if media_type == 'image' or (media_type == 'document' and ext.lower() in ['.jpg', '.jpeg', '.png']):

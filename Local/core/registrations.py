@@ -16,7 +16,10 @@ REGISTRATIONS_LOCK = threading.Lock()
 # Configuration
 NJUKO_API_URL = os.getenv("NJUKO_API_URL", "https://api.njuko.com/profile-definition/export-public/695ed6b584a40eb05b4dc18f/UXM38196655")
 SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", 300))  # 5 minutes
-REPORT_DIR = os.getenv("REPORT_DIR", "reportes_descargados")
+# Support for persistent storage on Render
+_DEFAULT_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_BASE_DIR = os.getenv("PERSISTENT_STORAGE_PATH", _DEFAULT_DATA_DIR)
+REPORT_DIR = os.path.join(_BASE_DIR, "reportes_descargados")
 
 def normalize_phone(phone):
     """Strips all non-digit characters and returns the last 9 digits."""

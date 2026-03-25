@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Virtual Environments
+Local/venv
+Local/.venv
+venv/
+.venv/
+
+# Testing and Datasets
+Local/OCRTestDataSet/
+Local/test_*.py
+Local/test_runners.xlsx
+Local/ocr_benchmark_results.json
+Local/simulation/
+validate.sh
+Local/test/
+
+# Local Data (will be provided by Render Disk)
+Local/media/
+Local/reportes_descargados/
+Local/chat_history.db
+
+# Configuration and Logs
+Local/.env
+Local/logs/
+Local/*.log
+
+# Python/System
+__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.DS_Store
+
+# Documentation
+*.md
+Local/*.sh
+Local/*.bat

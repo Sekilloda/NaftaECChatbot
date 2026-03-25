@@ -2,7 +2,9 @@ import sqlite3
 import os
 import json
 
-DB_PATH = "chat_history.db"
+# Support for persistent storage on Render
+DATA_DIR = os.getenv("PERSISTENT_STORAGE_PATH", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_PATH = os.path.join(DATA_DIR, "chat_history.db")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH, timeout=20)
