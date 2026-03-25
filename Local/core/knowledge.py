@@ -4,7 +4,6 @@ import json
 import requests
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from google import genai
 from google.genai import types
 from huggingface_hub import login
@@ -21,21 +20,9 @@ load_dotenv(os.path.join(base_dir, ".env"), override=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 GEMINI_RESPONSE_MODEL = os.getenv("GEMINI_RESPONSE_MODEL", "gemini-2.5-flash-lite")
-# Legacy providers commented out for preDeployment
-# GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
-# OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free")
-# MISTRAL_CHAT_MODEL = os.getenv("MISTRAL_CHAT_MODEL", "mistral-small-latest")
-
-# Handle Hugging Face Authentication
-HF_TOKEN = os.getenv("HF_TOKEN") or (os.getenv("MISTRAL_API") if str(os.getenv("MISTRAL_API")).startswith("hf_") else None)
-if HF_TOKEN:
-    try:
-        login(token=HF_TOKEN)
-    except Exception as e:
-        print(f"[KNOWLEDGE] HF Login failed: {e}")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
 
 # Global variables for lazy loading
-_EMBEDDER = None
 _EMBEDDINGS = None
 _FAQS_DF = None
 _DOCUMENTOS = None
@@ -54,7 +41,7 @@ def call_mistral_chat(prompt, model_id, mistral_key):
     return res.json()["choices"][0]["message"]["content"].strip()
 
 def _get_knowledge_base():
-    global _EMBEDDER, _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
+    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
     
     if _FAQS_DF is None:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,31 +49,39 @@ def _get_knowledge_base():
         
         if not os.path.exists(faq_path):
             print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
-            return None, None, None, None
+            return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
             
         try:
             _FAQS_DF = pd.read_excel(faq_path)
             _DOCUMENTOS = _FAQS_DF.to_dict(orient="records")
             descripciones = [str(d["question"] if d["type"] == "faq" else d["description"]) for d in _DOCUMENTOS]
             
-            print("[KNOWLEDGE] Initializing SentenceTransformer...")
-            _EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
-            _EMBEDDINGS = _EMBEDDER.encode(descripciones)
-            
-            # SANITY CHECK: Detect zero-vectors or NaNs (common on Python 3.14/Mac)
-            norms = np.linalg.norm(_EMBEDDINGS, axis=1)
-            if np.any(norms == 0):
-                print("[KNOWLEDGE] CRITICAL: Zero-vectors detected in embeddings! RAG effectiveness will be limited.")
-            if np.any(np.isnan(_EMBEDDINGS)):
-                print("[KNOWLEDGE] WARNING: NaNs detected in embeddings. Cleaning...")
-                _EMBEDDINGS = np.nan_to_num(_EMBEDDINGS)
-            
-            print(f"[KNOWLEDGE] Knowledge base loaded with {len(_DOCUMENTOS)} items.")
+            if client:
+                print(f"[KNOWLEDGE] Generating embeddings via Gemini ({GEMINI_EMBEDDING_MODEL})...")
+                res = client.models.embed_content(
+                    model=GEMINI_EMBEDDING_MODEL,
+                    contents=descripciones,
+                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
+                )
+                _EMBEDDINGS = np.array([e.values for e in res.embeddings])
+                
+                # SANITY CHECK: Detect zero-vectors or NaNs
+                norms = np.linalg.norm(_EMBEDDINGS, axis=1)
+                if np.any(norms == 0):
+                    print("[KNOWLEDGE] CRITICAL: Zero-vectors detected in embeddings!")
+                if np.any(np.isnan(_EMBEDDINGS)):
+                    print("[KNOWLEDGE] WARNING: NaNs detected in embeddings. Cleaning...")
+                    _EMBEDDINGS = np.nan_to_num(_EMBEDDINGS)
+                
+                print(f"[KNOWLEDGE] Knowledge base loaded with {len(_DOCUMENTOS)} items.")
+            else:
+                print("[KNOWLEDGE] Error: Gemini client not initialized for embeddings.")
+                return None, _FAQS_DF, _DOCUMENTOS
         except Exception as e:
             print(f"[KNOWLEDGE] Error loading knowledge base: {e}")
-            return None, None, None, None
+            return None, _FAQS_DF, _DOCUMENTOS
             
-    return _EMBEDDER, _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
+    return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
 
 def responder(pregunta, sender_jid=None, history=None, k=2):
     """
@@ -117,17 +112,23 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
 
     # 2. RAG Lookup
     faq_context = "--- BASE DE CONOCIMIENTOS (FAQs) ---\n"
-    embedder, embeddings, df, documentos = _get_knowledge_base()
+    embeddings, df, documentos = _get_knowledge_base()
     top_faq_answer = None
     best_score = 0
     
-    if embedder is not None:
+    if embeddings is not None and client is not None:
         try:
-            pregunta_emb = embedder.encode([pregunta])
+            # Generate query embedding
+            res_query = client.models.embed_content(
+                model=GEMINI_EMBEDDING_MODEL,
+                contents=pregunta,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY")
+            )
+            pregunta_emb = np.array(res_query.embeddings[0].values)
             p_norm = np.linalg.norm(pregunta_emb)
             
             if p_norm > 0:
-                # Manual Cosine Similarity for stability
+                # Manual Cosine Similarity
                 e_norms = np.linalg.norm(embeddings, axis=1)
                 e_norms[e_norms == 0] = 1.0 
                 

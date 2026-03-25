@@ -2,12 +2,10 @@ flask
 python-dotenv
 requests
 google-genai
-sentence-transformers
 pycryptodome
 Pillow
 pytesseract
 opencv-python-headless
 pandas
 openpyxl
-huggingface_hub
 numpy==1.26.4
