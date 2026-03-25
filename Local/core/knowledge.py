@@ -6,7 +6,6 @@ import pandas as pd
 import numpy as np
 from google import genai
 from google.genai import types
-from huggingface_hub import login
 
 # Load registration info from registrations module
 from core.registrations import get_user_registration_info, search_user_by_name
@@ -20,7 +19,7 @@ load_dotenv(os.path.join(base_dir, ".env"), override=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 GEMINI_RESPONSE_MODEL = os.getenv("GEMINI_RESPONSE_MODEL", "gemini-2.5-flash-lite")
-GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embedding-001")
 
 # Global variables for lazy loading
 _EMBEDDINGS = None
