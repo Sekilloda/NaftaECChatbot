@@ -168,6 +168,7 @@ def webhook():
         if not data:
             return jsonify({"status": "no_data"}), 400
             
+        print(f"[WEBHOOK] Event received: {data.get('event')}")
         if data.get("event") != "messages.upsert":
             return jsonify({"status": "ignored"})
 
@@ -179,17 +180,20 @@ def webhook():
         elif isinstance(messages, dict):
             message_container = messages.get("0") or messages
         else:
+            print(f"[WEBHOOK] Unrecognized structure: {type(messages)}")
             return jsonify({"status": "unrecognized_structure"}), 400
 
         if not message_container or message_container.get("key", {}).get("fromMe"):
             return jsonify({"status": "skipped"})
 
         sender = message_container.get("key", {}).get("remoteJid")
+        print(f"[WEBHOOK] Processing message from: {sender}")
         message_id = message_container.get("key", {}).get("id", "unknown")
         msg_content = message_container.get("message", {})
 
         user_status = get_user_status(sender)
         incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
+        print(f"[WEBHOOK] Text: {incoming_text} | Status: {user_status}")
         
         # Admin Override
         if is_admin_sender(sender):
@@ -214,7 +218,9 @@ def webhook():
                     push_name = message_container.get("pushName", "Desconocido")
                     clean_sender = sender.split('@')[0]
                     admin_msg = f"💬 Mensaje de {push_name} ({clean_sender}):\n{incoming_text}"
-                    send_whatsapp_message(ADMIN_PHONE, admin_msg)
+                    # Forward to the first admin in the list
+                    primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
+                    send_whatsapp_message(primary_admin, admin_msg)
                 return jsonify({"status": "forwarded_to_admin"})
 
         # --- DETERMINISTIC OCR MODE HANDLER ---
