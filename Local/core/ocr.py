@@ -12,9 +12,23 @@ import configparser
 from google import genai
 from google.genai import types
 
-# Initialize Gemini Client at module level
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+# Global variable for lazy loading
+_GEMINI_CLIENT = None
+
+def _get_gemini_client():
+    global _GEMINI_CLIENT
+    if _GEMINI_CLIENT is None:
+        from dotenv import load_dotenv
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env_path = os.path.join(base_dir, ".env")
+        load_dotenv(env_path, override=True)
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            _GEMINI_CLIENT = genai.Client(api_key=api_key)
+        else:
+            print("[OCR] WARNING: GEMINI_API_KEY not found in environment.")
+    return _GEMINI_CLIENT
+
 GEMINI_OCR_STRUCT_MODEL = os.getenv("GEMINI_OCR_STRUCT_MODEL", "gemini-2.5-flash")
 
 DEFAULT_PARAMS = {
@@ -145,32 +159,39 @@ def process_receipt_image(image_path: str, original_filename: str) -> dict:
                 match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", line_clean)
                 if match: data["fecha"] = match.group(1)
 
-        # Gemini-Refinement (Vision-capable model fallback/refinement)
+        # Gemini-Refinement (Vision-capable model)
+        gemini_client = _get_gemini_client()
         if gemini_client:
-            print(f"[OCR] Refining data with Gemini ({GEMINI_OCR_STRUCT_MODEL})...")
+            print(f"[OCR] Extracting data with Gemini Vision ({GEMINI_OCR_STRUCT_MODEL})...")
             try:
-                # We can send the raw text first for quick structured refinement
-                prompt = f"""
-                Analiza el siguiente texto extraído de un comprobante bancario y devuelve un JSON estructurado.
-                Campos requeridos: banco, monto, numero_comprobante, fecha, cuenta_origen.
-                
-                REGLAS:
-                1. 'monto' debe ser numérico con punto decimal.
-                2. 'fecha' debe ser DD/MM/YYYY.
-                3. 'numero_comprobante' es el número de referencia o transacción.
-                4. 'cuenta_origen' es el número de cuenta de donde sale el dinero.
-                5. Si no encuentras un campo, usa una cadena vacía "".
-                
-                Texto:
-                {raw_text}
+                prompt = """
+                Analiza este comprobante de pago bancario de Ecuador.
+                Extrae la información clave y devuélvela estrictamente en formato JSON.
+
+                CAMPOS REQUERIDOS:
+                - "banco": Nombre de la institución financiera (ej. Banco Pichincha, Produbanco, Guayaquil, Banco del Pacífico, etc.)
+                - "monto": Valor total pagado. Debe ser un número decimal (punto como separador decimal).
+                - "numero_comprobante": El número de transacción, referencia, control, documento o número de comprobante.
+                - "fecha": Fecha del pago en formato DD/MM/YYYY.
+                - "cuenta_origen": Número de cuenta de donde salió el dinero (si es visible).
+
+                REGLAS CRÍTICAS:
+                1. Si un valor no es legible o no existe, usa "".
+                2. Para "monto", extrae solo el número. No incluyas símbolos de moneda ($), "USD" ni comas para miles.
+                3. Para "numero_comprobante", prioriza el número etiquetado como "Referencia", "Control" o "Documento".
+                4. El resultado debe ser EXCLUSIVAMENTE el objeto JSON sin markdown.
                 """
-                # Retry loop for Gemini refinement
+                
+                # Use PIL image directly for Vision
+                # We also include raw_text as a hint, though Vision is primary
+                contents = [prompt, pil_image]
+                
                 res = None
                 for attempt in range(3):
                     try:
                         res = gemini_client.models.generate_content(
                             model=GEMINI_OCR_STRUCT_MODEL,
-                            contents=prompt,
+                            contents=contents,
                             config=types.GenerateContentConfig(response_mime_type="application/json")
                         )
                         break
@@ -182,15 +203,30 @@ def process_receipt_image(image_path: str, original_filename: str) -> dict:
                             raise e
                 
                 if res:
+                    # Clear Tesseract data and use Gemini as primary truth
                     gemini_data = json.loads(res.text)
-                    # Update if empty or refine
                     for key in data:
-                        if not data[key] or data[key] == "":
-                            val = gemini_data.get(key, "")
-                            if val and val != "Not found":
+                        val = gemini_data.get(key, "")
+                        if val and val != "Not found":
+                            # Standardization logic
+                            if key == "monto":
+                                try:
+                                    # Normalize to 2 decimal places string
+                                    clean_monto = re.sub(r'[^\d.]', '', str(val))
+                                    data[key] = "{:.2f}".format(float(clean_monto))
+                                except:
+                                    data[key] = "" # Clear if not a valid number
+                            elif key == "cuenta_origen":
+                                # Masking detection: If it has masking chars (*, •, etc.) and few digits, it's obfuscated
+                                digits_only = re.sub(r'\D', '', str(val))
+                                if any(c in str(val) for c in ['*', '•', '·', 'x', 'X']) or len(digits_only) < 5:
+                                    data[key] = ""
+                                else:
+                                    data[key] = digits_only
+                            else:
                                 data[key] = str(val)
             except Exception as ge:
-                print(f"[OCR] Gemini refinement failed: {ge}")
+                print(f"[OCR] Gemini extraction failed: {ge}")
 
         # Final sanity check for mandatory fields as per user request
         # (leave empty if not found, but we ensure they are present in the dict)

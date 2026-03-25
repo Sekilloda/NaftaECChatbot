@@ -12,6 +12,11 @@ from huggingface_hub import login
 # Load registration info from registrations module
 from core.registrations import get_user_registration_info, search_user_by_name
 
+# Robust environment loading
+from dotenv import load_dotenv
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(base_dir, ".env"), override=True)
+
 # Setup Clients
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None

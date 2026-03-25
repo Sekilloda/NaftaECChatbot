@@ -8,7 +8,8 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
 # Load environment variables once at entry point
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # Core modules
 from core.whatsapp import send_whatsapp_message, download_media, decrypt_and_save_media, normalize_phone

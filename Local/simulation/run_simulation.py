@@ -18,7 +18,7 @@ from core.knowledge import responder
 from core.database import save_message, get_last_messages, set_user_status, init_db
 
 # Load environment variables
-load_dotenv(".env")
+load_dotenv(".env", override=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -231,8 +231,6 @@ def call_ai_fallback_old(prompt, response_mime_type="text/plain", temperature=1.
     ]
     ...
 """
-
-    return None
 
 def generate_personas(count=5):
     prompt = (
