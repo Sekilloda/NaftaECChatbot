@@ -6,9 +6,10 @@ NaftaECChatbot is a production-ready WhatsApp-based chatbot designed to process 
 
 *   **Main Entry Point:** `Local/app.py` (Flask-based webhook for WhatsApp).
 *   **OCR Engine:** `Local/core/ocr.py` implements a **Vision-First** extraction pipeline using Gemini 2.5 Flash (sending images directly for high accuracy).
-*   **LLM Strategy:** Optimized for the Gemini API (Paid Tier).
-    *   **Response Generation:** `gemini-2.5-flash-lite` (Fast and cost-effective).
-    *   **OCR Extraction:** `gemini-2.5-flash` (Vision-enabled for structured data).
+*   **LLM Strategy:** Optimized for the Gemini API (Paid Tier) and **Low-RAM** environments.
+    *   **Response Generation:** `gemini-2.5-flash-lite`.
+    *   **OCR Extraction:** `gemini-2.5-flash` (Vision-enabled).
+    *   **RAG Embeddings:** `text-embedding-004` (API-based to save local RAM).
     *   **Classification & Help:** `gemini-2.5-flash-lite`.
 *   **Data Storage:** SQLite database (`Local/chat_history.db`) in WAL mode. Tables:
     *   `conversations`: Full history of user/assistant interactions.
@@ -38,6 +39,11 @@ To ensure maximum accuracy and security, the receipt processing flow follows a d
 4.  **Runner Collection:** User specifies the number of runners (1-10) and provides their ID numbers (Cédulas).
 5.  **Final Review:** A full summary is displayed for final user confirmation (`CONFIRMAR` / `REINTENTAR`).
 6.  **Persistence:** Validated data is hashed (SHA-256) and stored in `validated_registries`.
+
+## Media Management
+
+The bot stores decrypted receipts in the `media/` folder within the persistent storage path. To manage disk space efficiently:
+*   **Auto-Cleanup:** A background thread automatically deletes media files older than **7 days**. This provides a sufficient window for debugging while preventing disk overflow.
 
 ## Security & Admin Features
 
