@@ -407,17 +407,35 @@ def webhook():
             elif pending['state'] == 'AWAITING_AYUDA_CONFIRMATION':
                 classification = classify_confirmation_reply(incoming_text)
                 if 'affirmative' in classification:
-                    set_user_status(sender, 'ayuda')
-                    send_whatsapp_message(sender, "Entendido. He notificado a un representante. En breve se comunicarán contigo.")
-                    if ADMIN_PHONE:
-                        primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
-                        send_whatsapp_message(primary_admin, f"🚨 El usuario {sender.split('@')[0]} solicita ayuda humana.")
-                    clear_pending_confirmation(sender)
-                    return jsonify({'status': 'ayuda_activated'})
+                    pending['state'] = 'AWAITING_NAME_FOR_AYUDA'
+                    save_pending_confirmation(sender, pending)
+                    send_whatsapp_message(sender, "Entendido. Por favor, dime tu nombre para que un representante pueda atenderte mejor:")
+                    return jsonify({'status': 'awaiting_name'})
                 elif 'negative' in classification:
                     send_whatsapp_message(sender, "Entendido. Continuamos con el asistente virtual. ¿En qué puedo ayudarte?")
                     clear_pending_confirmation(sender)
                     return jsonify({'status': 'ayuda_cancelled'})
+            
+            elif pending['state'] == 'AWAITING_NAME_FOR_AYUDA':
+                user_name = incoming_text.strip()
+                if len(user_name) < 2:
+                    send_whatsapp_message(sender, "Por favor, ingresa un nombre válido.")
+                    return jsonify({'status': 'invalid_name'})
+                
+                # Normal flow resumes immediately after notification
+                send_whatsapp_message(sender, f"Gracias, {user_name}. He notificado a un representante. En breve se comunicarán contigo.")
+                
+                if ADMIN_PHONE:
+                    clean_phone = sender.split('@')[0]
+                    # Format as wa.me link for easy tapping
+                    wa_link = f"https://wa.me/{clean_phone}"
+                    admin_msg = f"🚨 *SOLICITUD DE AYUDA HUMANA*\n\n👤 *Nombre:* {user_name}\n📱 *Teléfono:* {clean_phone}\n🔗 *Chat:* {wa_link}"
+                    
+                    primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
+                    send_whatsapp_message(primary_admin, admin_msg)
+                
+                clear_pending_confirmation(sender)
+                return jsonify({'status': 'ayuda_notified_resuming_bot'})
 
         # 4. Help Detection
         needs_help = False
