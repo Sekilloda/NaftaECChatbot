@@ -168,6 +168,9 @@ def webhook():
         if not data:
             return jsonify({"status": "no_data"}), 400
             
+        # DEBUG: Print full payload to identify correct sender field
+        print(f"[DEBUG] Webhook Payload: {json.dumps(data)}")
+        
         print(f"[WEBHOOK] Event received: {data.get('event')}")
         if data.get("event") != "messages.upsert":
             return jsonify({"status": "ignored"})
