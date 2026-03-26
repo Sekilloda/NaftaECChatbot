@@ -187,7 +187,9 @@ def webhook():
 
         key = message_container.get("key", {})
         # Prioritize cleanedSenderPn or senderPn to get the real phone number, especially if remoteJid is a LID
-        sender = key.get("cleanedSenderPn") or key.get("senderPn") or key.get("remoteJid")
+        # Check both the container and the key for these fields
+        sender = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
+                 key.get("cleanedSenderPn") or key.get("senderPn") or key.get("remoteJid")
         
         # Ensure sender is in the format number@s.whatsapp.net if it looks like a phone number
         if sender and "@" not in str(sender):
@@ -213,10 +215,6 @@ def webhook():
                     return jsonify({"status": "admin_reset_success"})
 
         if user_status == 'ayuda':
-            if incoming_text.lower() == "#bot":
-                reset_user_status(sender)
-                send_whatsapp_message(sender, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
-                return jsonify({"status": "user_reset_success"})
             if incoming_text:
                 save_message(sender, "user", incoming_text)
                 if ADMIN_PHONE:
@@ -227,6 +225,9 @@ def webhook():
                     primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
                     send_whatsapp_message(primary_admin, admin_msg)
                 return jsonify({"status": "forwarded_to_admin"})
+            
+            # Prevent fallthrough for non-text messages in ayuda mode
+            return jsonify({"status": "ayuda_active_ignored"})
 
         # --- DETERMINISTIC OCR MODE HANDLER ---
         pending = get_pending_confirmation(sender)
@@ -402,6 +403,21 @@ def webhook():
                     send_whatsapp_message(sender, "Entendido. No realizaré acciones con esta imagen.")
                     clear_pending_confirmation(sender)
                     return jsonify({'status': 'ocr_cancelled'})
+            
+            elif pending['state'] == 'AWAITING_AYUDA_CONFIRMATION':
+                classification = classify_confirmation_reply(incoming_text)
+                if 'affirmative' in classification:
+                    set_user_status(sender, 'ayuda')
+                    send_whatsapp_message(sender, "Entendido. He notificado a un representante. En breve se comunicarán contigo.")
+                    if ADMIN_PHONE:
+                        primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
+                        send_whatsapp_message(primary_admin, f"🚨 El usuario {sender.split('@')[0]} solicita ayuda humana.")
+                    clear_pending_confirmation(sender)
+                    return jsonify({'status': 'ayuda_activated'})
+                elif 'negative' in classification:
+                    send_whatsapp_message(sender, "Entendido. Continuamos con el asistente virtual. ¿En qué puedo ayudarte?")
+                    clear_pending_confirmation(sender)
+                    return jsonify({'status': 'ayuda_cancelled'})
 
         # 4. Help Detection
         needs_help = False
