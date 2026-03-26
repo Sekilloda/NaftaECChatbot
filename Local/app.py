@@ -182,29 +182,73 @@ def webhook():
         else:
             return jsonify({"status": "unrecognized_structure"}), 400
 
+def get_effective_jid(message_container):
+    """
+    Consistent logic to get the most 'real' JID possible.
+    Prioritizes cleanedSenderPn/senderPn (Phone Number) over remoteJid (which could be a LID).
+    """
+    key = message_container.get("key", {})
+    # Check root and key for phone numbers
+    pn = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
+         key.get("cleanedSenderPn") or key.get("senderPn")
+    
+    if pn:
+        # Normalize to number@s.whatsapp.net
+        clean_pn = "".join(filter(str.isdigit, str(pn)))
+        return f"{clean_pn}@s.whatsapp.net"
+    
+    # Fallback to remoteJid if no PN is found
+    jid = key.get("remoteJid")
+    if jid:
+        if "@" in jid:
+            # Handle weird suffixes like the ones seen in simulation logs
+            base, suffix = jid.split("@", 1)
+            if "/" in suffix: # e.g. @Local/simulation/...
+                return f"{base}@s.whatsapp.net"
+            return jid
+        return f"{jid}@s.whatsapp.net"
+    
+    return None
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    try:
+        ensure_background_services()
+        if not is_authorized_webhook(request):
+            return jsonify({"status": "unauthorized"}), 401
+
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "no_data"}), 400
+            
+        event_type = data.get("event")
+        if event_type != "messages.upsert":
+            return jsonify({"status": "ignored"})
+
+        payload_data = data.get("data", {})
+        messages = payload_data.get("messages") or payload_data.get("message")
+        
+        if isinstance(messages, list) and len(messages) > 0:
+            message_container = messages[0]
+        elif isinstance(messages, dict):
+            message_container = messages.get("0") or messages
+        else:
+            return jsonify({"status": "unrecognized_structure"}), 400
+
         if not message_container:
             return jsonify({"status": "skipped"})
 
         key = message_container.get("key", {})
         is_from_me = bool(key.get("fromMe"))
         
-        # Prioritize cleanedSenderPn or senderPn to get the real phone number
-        # If it's from me, the 'sender' in the protocol is the bot account itself.
-        # If not from me, we try to get the sender's phone, falling back to remoteJid (the chat ID).
-        sender_pn = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
-                    key.get("cleanedSenderPn") or key.get("senderPn")
+        # Determine the user we are interacting with
+        effective_user_jid = get_effective_jid(message_container)
         
+        # For logging and is_admin_sender, we need to know who physically sent this specific packet
         if is_from_me:
-            # When fromMe is true, the sender is the bot. We can use ADMIN_PHONE's first number as a proxy
-            # or just leave it as 'bot' for logging, but we need the real JID if we want to check is_admin_sender.
-            # However, for fromMe, we trust it's the admin.
             sender = "bot@s.whatsapp.net" 
         else:
-            sender = sender_pn or key.get("remoteJid")
-        
-        # Ensure sender is in the format number@s.whatsapp.net if it looks like a phone number
-        if sender and "@" not in str(sender):
-            sender = f"{sender}@s.whatsapp.net"
+            sender = effective_user_jid
         
         message_id = key.get("id", "unknown")
         msg_content = message_container.get("message", {})
@@ -219,51 +263,50 @@ def webhook():
 
         # Admin / Manual Override: Check this FIRST before skipping fromMe
         if incoming_text.lower().startswith("#resuelto"):
-            print(f"[ADMIN] Command detected: #resuelto | fromMe: {is_from_me} | Sender: {sender} | Chat: {key.get('remoteJid')}")
+            print(f"[ADMIN] Command detected: #resuelto | fromMe: {is_from_me} | Sender: {sender} | Target: {effective_user_jid}")
             # Check if this is an admin OR if the bot is sending it (meaning the account holder is typing)
             if is_from_me or is_admin_sender(sender):
-                target_jid = key.get("remoteJid")
-                if target_jid and not target_jid.endswith("@g.us"): # Avoid groups for now
-                    print(f"[ADMIN] Resetting status for {target_jid}")
-                    reset_user_status(target_jid)
-                    send_whatsapp_message(target_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
-                    return jsonify({"status": "admin_resuelto_success", "target": target_jid})
+                if effective_user_jid and not effective_user_jid.endswith("@g.us"):
+                    print(f"[ADMIN] Resetting status for {effective_user_jid}")
+                    reset_user_status(effective_user_jid)
+                    send_whatsapp_message(effective_user_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
+                    return jsonify({"status": "admin_resuelto_success", "target": effective_user_jid})
 
         # Skip messages sent by the bot itself to avoid infinite loops
         if is_from_me:
             return jsonify({"status": "skipped_from_me"})
 
-        user_status = get_user_status(sender)
-        print(f"[WEBHOOK] {event_type} | From: {sender} | Text: {incoming_text[:50]}... | Status: {user_status}")
+        user_status = get_user_status(effective_user_jid)
+        print(f"[WEBHOOK] {event_type} | From: {effective_user_jid} | Text: {incoming_text[:50]}... | Status: {user_status}")
 
         if user_status == 'ayuda':
             # Check for bot resume command
-            if incoming_text and re.match(r"^(bot|b0t|b\.o\.t)$", incoming_text.strip(), re.IGNORECASE):
-                reset_user_status(sender)
-                send_whatsapp_message(sender, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
+            if incoming_text and re.match(r"^(bot|b0t|b\.o\.t)$", incoming_text, re.IGNORECASE):
+                reset_user_status(effective_user_jid)
+                send_whatsapp_message(effective_user_jid, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
                 if ADMIN_PHONE:
-                    clean_phone = sender.split('@')[0]
+                    clean_phone = effective_user_jid.split('@')[0]
                     admin_msg = f"ℹ️ El usuario {clean_phone} ha cancelado la solicitud de ayuda y ha vuelto al modo bot."
                     primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
                     send_whatsapp_message(primary_admin, admin_msg)
                 return jsonify({"status": "user_reset_to_bot"})
 
-            # Silence: No automatic replies or forwarding. The admin handles the chat manually.
+            # Silence in ayuda mode
             return jsonify({"status": "ayuda_active_silence"})
 
         # --- DETERMINISTIC OCR MODE HANDLER ---
-        pending = get_pending_confirmation(sender)
+        pending = get_pending_confirmation(effective_user_jid)
         if pending and pending['state'].startswith('OCR_'):
-            save_message(sender, "user", incoming_text)
+            save_message(effective_user_jid, "user", incoming_text)
             
             # 1. OCR Edit Mode
             if pending['state'] == 'OCR_EDIT_MODE':
                 if incoming_text.lower() == 'correcto':
-                    save_pending_confirmation(sender, {**pending, "state": "OCR_AWAITING_RUNNER_COUNT"})
-                    send_whatsapp_message(sender, "¿A cuántos corredores corresponde esta transacción?")
+                    save_pending_confirmation(effective_user_jid, {**pending, "state": "OCR_AWAITING_RUNNER_COUNT"})
+                    send_whatsapp_message(effective_user_jid, "¿A cuántos corredores corresponde esta transacción?")
                     return jsonify({'status': 'ocr_confirmed'})
 
-                # Handle specific field updates: "banco: Pichincha", "fecha: 01/01/2024", "cuenta: 12345"
+                # Handle specific field updates
                 match = re.match(r"(?i)^(banco|fecha|cuenta|cuenta origen)\s*:\s*(.*)", incoming_text)
                 if match:
                     field = match.group(1).lower().strip()
@@ -275,23 +318,23 @@ def webhook():
                     elif 'cuenta' in field: ocr_data['cuenta_origen'] = value
                     
                     pending['metadata']['ocr_data'] = ocr_data
-                    save_pending_confirmation(sender, pending)
+                    save_pending_confirmation(effective_user_jid, pending)
                     
                     msg = f"Dato actualizado.\n\n{format_ocr_data(ocr_data)}\n\n¿Deseas corregir algo más (Banco, Fecha, Cuenta Origen) o es 'Correcto'?"
-                    send_whatsapp_message(sender, msg)
+                    send_whatsapp_message(effective_user_jid, msg)
                     return jsonify({'status': 'ocr_field_updated'})
 
                 # Block sensitive field updates
                 if any(x in incoming_text.lower() for x in ['monto', 'total', 'comprobante', 'numero', 'referencia']):
-                    send_whatsapp_message(sender, "Lo siento, el Monto y el Número de comprobante no pueden ser editados por seguridad. Si los datos son incorrectos, ¿deseas intentar subir la imagen de nuevo? (responde 'reintentar' o 'cancelar')")
+                    send_whatsapp_message(effective_user_jid, "Lo siento, el Monto y el Número de comprobante no pueden ser editados por seguridad. Si los datos son incorrectos, ¿deseas intentar subir la imagen de nuevo? (responde 'reintentar' o 'cancelar')")
                     return jsonify({'status': 'ocr_edit_blocked'})
 
                 if incoming_text.lower() == 'reintentar':
-                    clear_pending_confirmation(sender)
-                    send_whatsapp_message(sender, "Entendido. Por favor, envía la imagen del comprobante de nuevo.")
+                    clear_pending_confirmation(effective_user_jid)
+                    send_whatsapp_message(effective_user_jid, "Entendido. Por favor, envía la imagen del comprobante de nuevo.")
                     return jsonify({'status': 'ocr_reset'})
                 
-                send_whatsapp_message(sender, "Por favor, para editar usa el formato 'Campo: Valor' (ej: Banco: Pichincha) o responde 'Correcto' si todo está bien.")
+                send_whatsapp_message(effective_user_jid, "Por favor, para editar usa el formato 'Campo: Valor' (ej: Banco: Pichincha) o responde 'Correcto' si todo está bien.")
                 return jsonify({'status': 'ocr_waiting_valid_input'})
 
             # 2. Awaiting Runner Count
@@ -303,19 +346,19 @@ def webhook():
                     pending['metadata']['runner_count'] = count
                     pending['metadata']['cedulas_collected'] = []
                     pending['state'] = 'OCR_AWAITING_CEDULAS'
-                    save_pending_confirmation(sender, pending)
+                    save_pending_confirmation(effective_user_jid, pending)
                     
-                    send_whatsapp_message(sender, f"Entendido ({count} corredores). Por favor, ingresa el primer Número de cédula:")
+                    send_whatsapp_message(effective_user_jid, f"Entendido ({count} corredores). Por favor, ingresa el primer Número de cédula:")
                     return jsonify({'status': 'ocr_count_received'})
                 except:
-                    send_whatsapp_message(sender, "Por favor, ingresa un número válido de corredores (1-10).")
+                    send_whatsapp_message(effective_user_jid, "Por favor, ingresa un número válido de corredores (1-10).")
                     return jsonify({'status': 'ocr_invalid_count'})
 
             # 3. Awaiting Cedulas
             if pending['state'] == 'OCR_AWAITING_CEDULAS':
                 cedula = re.sub(r'\D', '', incoming_text)
                 if len(cedula) < 5:
-                    send_whatsapp_message(sender, "El número de cédula parece inválido. Inténtalo de nuevo.")
+                    send_whatsapp_message(effective_user_jid, "El número de cédula parece inválido. Inténtalo de nuevo.")
                     return jsonify({'status': 'ocr_invalid_cedula'})
                 
                 collected = pending['metadata'].get('cedulas_collected', [])
@@ -324,12 +367,11 @@ def webhook():
                 
                 target_count = pending['metadata'].get('runner_count', 1)
                 if len(collected) < target_count:
-                    save_pending_confirmation(sender, pending)
-                    send_whatsapp_message(sender, f"Cédula recibida ({len(collected)}/{target_count}). Ingresa la siguiente:")
+                    save_pending_confirmation(effective_user_jid, pending)
+                    send_whatsapp_message(effective_user_jid, f"Cédula recibida ({len(collected)}/{target_count}). Ingresa la siguiente:")
                 else:
-                    # Transition to final confirmation
                     pending['state'] = 'OCR_FINAL_CONFIRMATION'
-                    save_pending_confirmation(sender, pending)
+                    save_pending_confirmation(effective_user_jid, pending)
                     
                     ocr_data = pending['metadata']['ocr_data']
                     cedulas_str = "\n".join([f"- {c}" for c in collected])
@@ -339,7 +381,7 @@ def webhook():
                         f"👥 Cédulas de corredores ({len(collected)}):\n{cedulas_str}\n\n"
                         "¿Confirmas que toda la información es correcta? Responde 'CONFIRMAR' para finalizar o 'REINTENTAR' para empezar de nuevo."
                     )
-                    send_whatsapp_message(sender, summary)
+                    send_whatsapp_message(effective_user_jid, summary)
                 return jsonify({'status': 'ocr_all_cedulas_received'})
 
             # 4. Final Confirmation Handler
@@ -352,7 +394,7 @@ def webhook():
                         unique_id = hash_registry({"cedula": c, "num": ocr_data['numero_comprobante'], "monto": ocr_data['monto']})
                         save_validated_registry({
                             "unique_id": unique_id,
-                            "sender_jid": sender,
+                            "sender_jid": effective_user_jid,
                             "cedula": c,
                             "banco": ocr_data['banco'],
                             "monto": ocr_data['monto'],
@@ -361,17 +403,17 @@ def webhook():
                             "cuenta_origen": ocr_data['cuenta_origen']
                         })
                     
-                    send_whatsapp_message(sender, "Comprobante registrado exitosamente.")
-                    clear_pending_confirmation(sender)
+                    send_whatsapp_message(effective_user_jid, "Comprobante registrado exitosamente.")
+                    clear_pending_confirmation(effective_user_jid)
                     return jsonify({'status': 'ocr_final_success'})
                 
                 elif 'reintentar' in incoming_text.lower() or 'no' == incoming_text.lower():
-                    clear_pending_confirmation(sender)
-                    send_whatsapp_message(sender, "Registro cancelado. Por favor, envía la imagen del comprobante de nuevo si deseas iniciar otro registro.")
+                    clear_pending_confirmation(effective_user_jid)
+                    send_whatsapp_message(effective_user_jid, "Registro cancelado. Por favor, envía la imagen del comprobante de nuevo si deseas iniciar otro registro.")
                     return jsonify({'status': 'ocr_final_reset'})
                 
                 else:
-                    send_whatsapp_message(sender, "Por favor, responde 'CONFIRMAR' para guardar los datos o 'REINTENTAR' para cancelar.")
+                    send_whatsapp_message(effective_user_jid, "Por favor, responde 'CONFIRMAR' para guardar los datos o 'REINTENTAR' para cancelar.")
                     return jsonify({'status': 'ocr_final_waiting'})
 
         # --- MEDIA HANDLING ---
@@ -389,12 +431,12 @@ def webhook():
                 encrypted_data = download_media(media_url)
                 if encrypted_data and decrypt_and_save_media(media_key, encrypted_data, output_path, media_type):
                     if media_type == 'image' or (media_type == 'document' and ext.lower() in ['.jpg', '.jpeg', '.png']):
-                        save_pending_confirmation(sender, {
+                        save_pending_confirmation(effective_user_jid, {
                             "message_id": message_id, "output_path": output_path, 
                             "original_filename": f'{message_id}{ext}', "state": "AWAITING_RECEIPT_CONFIRMATION",
                             "metadata": {}
                         })
-                        send_whatsapp_message(sender, "¿Esta imagen corresponde a un comprobante de pago?")
+                        send_whatsapp_message(effective_user_jid, "¿Esta imagen corresponde a un comprobante de pago?")
                         return jsonify({'status': 'media_received_awaiting_confirmation'})
                 return jsonify({'status': 'media_processed'})
 
@@ -402,62 +444,60 @@ def webhook():
         if not incoming_text:
             return jsonify({"status": "unsupported_type"})
 
-        save_message(sender, "user", incoming_text)
+        save_message(effective_user_jid, "user", incoming_text)
 
         if pending:
             if pending['state'] == 'AWAITING_RECEIPT_CONFIRMATION':
                 classification = classify_confirmation_reply(incoming_text)
                 if 'affirmative' in classification:
-                    send_whatsapp_message(sender, "Procesando el recibo, un momento...")
+                    send_whatsapp_message(effective_user_jid, "Procesando el recibo, un momento...")
                     ocr_data = process_receipt_image_lazy(pending['output_path'], pending['original_filename'])
                     if ocr_data:
                         pending['state'] = 'OCR_EDIT_MODE'
                         pending['metadata']['ocr_data'] = ocr_data
-                        save_pending_confirmation(sender, pending)
+                        save_pending_confirmation(effective_user_jid, pending)
                         
                         msg = f"Datos extraídos:\n\n{format_ocr_data(ocr_data)}\n\n¿Deseas corregir algún campo (Banco, Fecha, Cuenta Origen)? Responde con 'Campo: Valor' o escribe 'Correcto'."
-                        send_whatsapp_message(sender, msg)
+                        send_whatsapp_message(effective_user_jid, msg)
                     else:
-                        send_whatsapp_message(sender, "Lo siento, no pude procesar la imagen.")
-                        clear_pending_confirmation(sender)
+                        send_whatsapp_message(effective_user_jid, "Lo siento, no pude procesar la imagen.")
+                        clear_pending_confirmation(effective_user_jid)
                     return jsonify({'status': 'ocr_started'})
                 elif 'negative' in classification:
-                    send_whatsapp_message(sender, "Entendido. No realizaré acciones con esta imagen.")
-                    clear_pending_confirmation(sender)
+                    send_whatsapp_message(effective_user_jid, "Entendido. No realizaré acciones con esta imagen.")
+                    clear_pending_confirmation(effective_user_jid)
                     return jsonify({'status': 'ocr_cancelled'})
             
             elif pending['state'] == 'AWAITING_AYUDA_CONFIRMATION':
                 classification = classify_confirmation_reply(incoming_text)
                 if 'affirmative' in classification:
                     pending['state'] = 'AWAITING_NAME_FOR_AYUDA'
-                    save_pending_confirmation(sender, pending)
-                    send_whatsapp_message(sender, "Entendido. Por favor, dime tu nombre para que un representante pueda atenderte mejor:")
+                    save_pending_confirmation(effective_user_jid, pending)
+                    send_whatsapp_message(effective_user_jid, "Entendido. Por favor, dime tu nombre para que un representante pueda atenderte mejor:")
                     return jsonify({'status': 'awaiting_name'})
                 elif 'negative' in classification:
-                    send_whatsapp_message(sender, "Entendido. Continuamos con el asistente virtual. ¿En qué puedo ayudarte?")
-                    clear_pending_confirmation(sender)
+                    send_whatsapp_message(effective_user_jid, "Entendido. Continuamos con el asistente virtual. ¿En qué puedo ayudarte?")
+                    clear_pending_confirmation(effective_user_jid)
                     return jsonify({'status': 'ayuda_cancelled'})
             
             elif pending['state'] == 'AWAITING_NAME_FOR_AYUDA':
                 user_name = incoming_text.strip()
                 if len(user_name) < 2:
-                    send_whatsapp_message(sender, "Por favor, ingresa un nombre válido.")
+                    send_whatsapp_message(effective_user_jid, "Por favor, ingresa un nombre válido.")
                     return jsonify({'status': 'invalid_name'})
                 
-                # Set help status so normal flow pauses
-                set_user_status(sender, 'ayuda')
-                send_whatsapp_message(sender, f"Gracias, {user_name}. He notificado a un representante. Mientras un representante atiende tu caso, el asistente virtual no responderá a tus mensajes. Puedes escribir 'Bot' en cualquier momento para volver a hablar con el asistente.")
+                set_user_status(effective_user_jid, 'ayuda')
+                send_whatsapp_message(effective_user_jid, f"Gracias, {user_name}. He notificado a un representante. Mientras un representante atiende tu caso, el asistente virtual no responderá a tus mensajes. Puedes escribir 'Bot' en cualquier momento para volver a hablar con el asistente.")
                 
                 if ADMIN_PHONE:
-                    clean_phone = sender.split('@')[0]
-                    # Format as wa.me link for easy tapping
+                    clean_phone = effective_user_jid.split('@')[0]
                     wa_link = f"https://wa.me/{clean_phone}"
                     admin_msg = f"🚨 *SOLICITUD DE AYUDA HUMANA*\n\n👤 *Nombre:* {user_name}\n📱 *Teléfono:* {clean_phone}\n🔗 *Chat:* {wa_link}"
                     
                     primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
                     send_whatsapp_message(primary_admin, admin_msg)
                 
-                clear_pending_confirmation(sender)
+                clear_pending_confirmation(effective_user_jid)
                 return jsonify({'status': 'ayuda_activated'})
 
         # 4. Help Detection
@@ -470,15 +510,15 @@ def webhook():
             except Exception: pass
 
         if needs_help:
-            save_pending_confirmation(sender, {"message_id": message_id, "output_path": "", "original_filename": "", "state": "AWAITING_AYUDA_CONFIRMATION", "metadata": {}})
-            send_whatsapp_message(sender, "¿Necesitas ayuda de un representante? Confirma si es así.")
+            save_pending_confirmation(effective_user_jid, {"message_id": message_id, "output_path": "", "original_filename": "", "state": "AWAITING_AYUDA_CONFIRMATION", "metadata": {}})
+            send_whatsapp_message(effective_user_jid, "¿Necesitas ayuda de un representante? Confirma si es así.")
             return jsonify({"status": "help_confirmation_sent"})
 
         # 5. General Query
-        history = get_last_messages(sender, limit=20)
-        response = responder(incoming_text, sender_jid=sender, history=[(m['role'], m['content']) for m in history])
-        save_message(sender, "assistant", response)
-        send_whatsapp_message(sender, response)
+        history = get_last_messages(effective_user_jid, limit=20)
+        response = responder(incoming_text, sender_jid=effective_user_jid, history=[(m['role'], m['content']) for m in history])
+        save_message(effective_user_jid, "assistant", response)
+        send_whatsapp_message(effective_user_jid, response)
         return jsonify({"status": "ok"})
 
     except Exception as e:
