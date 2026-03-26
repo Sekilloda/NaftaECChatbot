@@ -216,7 +216,7 @@ def webhook():
 
         if user_status == 'ayuda':
             # Check for bot resume command
-            if incoming_text and re.match(r"^(?i)(bot|b0t|b\.o\.t)$", incoming_text.strip()):
+            if incoming_text and re.match(r"^(bot|b0t|b\.o\.t)$", incoming_text.strip(), re.IGNORECASE):
                 reset_user_status(sender)
                 send_whatsapp_message(sender, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
                 if ADMIN_PHONE:
