@@ -215,19 +215,19 @@ def webhook():
                     return jsonify({"status": "admin_reset_success"})
 
         if user_status == 'ayuda':
-            if incoming_text:
-                save_message(sender, "user", incoming_text)
+            # Check for bot resume command
+            if incoming_text and re.match(r"^(?i)(bot|b0t|b\.o\.t)$", incoming_text.strip()):
+                reset_user_status(sender)
+                send_whatsapp_message(sender, "Entendido. El asistente virtual vuelve a estar activo. ¿En qué puedo ayudarte?")
                 if ADMIN_PHONE:
-                    push_name = message_container.get("pushName", "Desconocido")
-                    clean_sender = sender.split('@')[0]
-                    admin_msg = f"💬 Mensaje de {push_name} ({clean_sender}):\n{incoming_text}"
-                    # Forward to the first admin in the list
+                    clean_phone = sender.split('@')[0]
+                    admin_msg = f"ℹ️ El usuario {clean_phone} ha cancelado la solicitud de ayuda y ha vuelto al modo bot."
                     primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
                     send_whatsapp_message(primary_admin, admin_msg)
-                return jsonify({"status": "forwarded_to_admin"})
-            
-            # Prevent fallthrough for non-text messages in ayuda mode
-            return jsonify({"status": "ayuda_active_ignored"})
+                return jsonify({"status": "user_reset_to_bot"})
+
+            # Silence: No automatic replies or forwarding. The admin handles the chat manually.
+            return jsonify({"status": "ayuda_active_silence"})
 
         # --- DETERMINISTIC OCR MODE HANDLER ---
         pending = get_pending_confirmation(sender)
@@ -422,8 +422,9 @@ def webhook():
                     send_whatsapp_message(sender, "Por favor, ingresa un nombre válido.")
                     return jsonify({'status': 'invalid_name'})
                 
-                # Normal flow resumes immediately after notification
-                send_whatsapp_message(sender, f"Gracias, {user_name}. He notificado a un representante. En breve se comunicarán contigo.")
+                # Set help status so normal flow pauses
+                set_user_status(sender, 'ayuda')
+                send_whatsapp_message(sender, f"Gracias, {user_name}. He notificado a un representante. Mientras un representante atiende tu caso, el asistente virtual no responderá a tus mensajes. Puedes escribir 'Bot' en cualquier momento para volver a hablar con el asistente.")
                 
                 if ADMIN_PHONE:
                     clean_phone = sender.split('@')[0]
@@ -435,7 +436,7 @@ def webhook():
                     send_whatsapp_message(primary_admin, admin_msg)
                 
                 clear_pending_confirmation(sender)
-                return jsonify({'status': 'ayuda_notified_resuming_bot'})
+                return jsonify({'status': 'ayuda_activated'})
 
         # 4. Help Detection
         needs_help = False
