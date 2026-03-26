@@ -186,12 +186,21 @@ def webhook():
             return jsonify({"status": "skipped"})
 
         key = message_container.get("key", {})
-        is_from_me = key.get("fromMe")
+        is_from_me = bool(key.get("fromMe"))
         
-        # Prioritize cleanedSenderPn or senderPn to get the real phone number, especially if remoteJid is a LID
-        # Check both the container and the key for these fields
-        sender = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
-                 key.get("cleanedSenderPn") or key.get("senderPn") or key.get("remoteJid")
+        # Prioritize cleanedSenderPn or senderPn to get the real phone number
+        # If it's from me, the 'sender' in the protocol is the bot account itself.
+        # If not from me, we try to get the sender's phone, falling back to remoteJid (the chat ID).
+        sender_pn = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
+                    key.get("cleanedSenderPn") or key.get("senderPn")
+        
+        if is_from_me:
+            # When fromMe is true, the sender is the bot. We can use ADMIN_PHONE's first number as a proxy
+            # or just leave it as 'bot' for logging, but we need the real JID if we want to check is_admin_sender.
+            # However, for fromMe, we trust it's the admin.
+            sender = "bot@s.whatsapp.net" 
+        else:
+            sender = sender_pn or key.get("remoteJid")
         
         # Ensure sender is in the format number@s.whatsapp.net if it looks like a phone number
         if sender and "@" not in str(sender):
@@ -200,21 +209,29 @@ def webhook():
         message_id = key.get("id", "unknown")
         msg_content = message_container.get("message", {})
 
-        incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
+        # Extract text from various possible locations
+        incoming_text = (
+            msg_content.get("conversation") or 
+            msg_content.get("extendedTextMessage", {}).get("text") or 
+            msg_content.get("imageMessage", {}).get("caption") or
+            ""
+        ).strip()
 
         # Admin / Manual Override: Check this FIRST before skipping fromMe
         if incoming_text.lower().startswith("#resuelto"):
-            # Check if this is an admin OR if the bot is sending it to someone else
-            if is_admin_sender(sender) or is_from_me:
+            print(f"[ADMIN] Command detected: #resuelto | fromMe: {is_from_me} | Sender: {sender} | Chat: {key.get('remoteJid')}")
+            # Check if this is an admin OR if the bot is sending it (meaning the account holder is typing)
+            if is_from_me or is_admin_sender(sender):
                 target_jid = key.get("remoteJid")
-                if target_jid:
+                if target_jid and not target_jid.endswith("@g.us"): # Avoid groups for now
+                    print(f"[ADMIN] Resetting status for {target_jid}")
                     reset_user_status(target_jid)
                     send_whatsapp_message(target_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
-                    return jsonify({"status": "admin_resuelto_success"})
+                    return jsonify({"status": "admin_resuelto_success", "target": target_jid})
 
-        # Skip messages sent by the bot itself to avoid infinite loops (unless it was the override command handled above)
+        # Skip messages sent by the bot itself to avoid infinite loops
         if is_from_me:
-            return jsonify({"status": "skipped"})
+            return jsonify({"status": "skipped_from_me"})
 
         user_status = get_user_status(sender)
         print(f"[WEBHOOK] {event_type} | From: {sender} | Text: {incoming_text[:50]}... | Status: {user_status}")
