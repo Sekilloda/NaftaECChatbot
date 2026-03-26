@@ -182,10 +182,12 @@ def webhook():
         else:
             return jsonify({"status": "unrecognized_structure"}), 400
 
-        if not message_container or message_container.get("key", {}).get("fromMe"):
+        if not message_container:
             return jsonify({"status": "skipped"})
 
         key = message_container.get("key", {})
+        is_from_me = key.get("fromMe")
+        
         # Prioritize cleanedSenderPn or senderPn to get the real phone number, especially if remoteJid is a LID
         # Check both the container and the key for these fields
         sender = message_container.get("cleanedSenderPn") or message_container.get("senderPn") or \
@@ -198,21 +200,24 @@ def webhook():
         message_id = key.get("id", "unknown")
         msg_content = message_container.get("message", {})
 
-        user_status = get_user_status(sender)
         incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
-        print(f"[WEBHOOK] {event_type} | From: {sender} | Text: {incoming_text[:50]}... | Status: {user_status}")
-        
-        # Admin Override
-        if is_admin_sender(sender):
-            if incoming_text.lower().startswith("#resolver"):
-                parts = incoming_text.split()
-                if len(parts) > 1:
-                    target_phone = normalize_phone(parts[1])
-                    target_jid = f"{target_phone}@s.whatsapp.net"
+
+        # Admin / Manual Override: Check this FIRST before skipping fromMe
+        if incoming_text.lower().startswith("#resuelto"):
+            # Check if this is an admin OR if the bot is sending it to someone else
+            if is_admin_sender(sender) or is_from_me:
+                target_jid = key.get("remoteJid")
+                if target_jid:
                     reset_user_status(target_jid)
-                    send_whatsapp_message(sender, f"✅ Estado de {target_phone} reseteado a 'bot'.")
                     send_whatsapp_message(target_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
-                    return jsonify({"status": "admin_reset_success"})
+                    return jsonify({"status": "admin_resuelto_success"})
+
+        # Skip messages sent by the bot itself to avoid infinite loops (unless it was the override command handled above)
+        if is_from_me:
+            return jsonify({"status": "skipped"})
+
+        user_status = get_user_status(sender)
+        print(f"[WEBHOOK] {event_type} | From: {sender} | Text: {incoming_text[:50]}... | Status: {user_status}")
 
         if user_status == 'ayuda':
             # Check for bot resume command
