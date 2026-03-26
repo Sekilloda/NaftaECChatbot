@@ -189,9 +189,16 @@ def webhook():
         if not message_container or message_container.get("key", {}).get("fromMe"):
             return jsonify({"status": "skipped"})
 
-        sender = message_container.get("key", {}).get("remoteJid")
+        key = message_container.get("key", {})
+        # Prioritize cleanedSenderPn or senderPn to get the real phone number, especially if remoteJid is a LID
+        sender = key.get("cleanedSenderPn") or key.get("senderPn") or key.get("remoteJid")
+        
+        # Ensure sender is in the format number@s.whatsapp.net if it looks like a phone number
+        if sender and "@" not in str(sender):
+            sender = f"{sender}@s.whatsapp.net"
+        
         print(f"[WEBHOOK] Processing message from: {sender}")
-        message_id = message_container.get("key", {}).get("id", "unknown")
+        message_id = key.get("id", "unknown")
         msg_content = message_container.get("message", {})
 
         user_status = get_user_status(sender)
