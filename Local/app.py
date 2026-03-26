@@ -157,31 +157,6 @@ def health():
     ensure_background_services()
     return jsonify({"status": "healthy", "user_status": "ready"}), 200
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    try:
-        ensure_background_services()
-        if not is_authorized_webhook(request):
-            return jsonify({"status": "unauthorized"}), 401
-
-        data = request.get_json()
-        if not data:
-            return jsonify({"status": "no_data"}), 400
-            
-        event_type = data.get("event")
-        if event_type != "messages.upsert":
-            return jsonify({"status": "ignored"})
-
-        payload_data = data.get("data", {})
-        messages = payload_data.get("messages") or payload_data.get("message")
-        
-        if isinstance(messages, list) and len(messages) > 0:
-            message_container = messages[0]
-        elif isinstance(messages, dict):
-            message_container = messages.get("0") or messages
-        else:
-            return jsonify({"status": "unrecognized_structure"}), 400
-
 def get_effective_jid(message_container):
     """
     Consistent logic to get the most 'real' JID possible.
