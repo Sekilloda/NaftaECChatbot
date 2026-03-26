@@ -168,11 +168,8 @@ def webhook():
         if not data:
             return jsonify({"status": "no_data"}), 400
             
-        # DEBUG: Print full payload to identify correct sender field
-        print(f"[DEBUG] Webhook Payload: {json.dumps(data)}")
-        
-        print(f"[WEBHOOK] Event received: {data.get('event')}")
-        if data.get("event") != "messages.upsert":
+        event_type = data.get("event")
+        if event_type != "messages.upsert":
             return jsonify({"status": "ignored"})
 
         payload_data = data.get("data", {})
@@ -183,7 +180,6 @@ def webhook():
         elif isinstance(messages, dict):
             message_container = messages.get("0") or messages
         else:
-            print(f"[WEBHOOK] Unrecognized structure: {type(messages)}")
             return jsonify({"status": "unrecognized_structure"}), 400
 
         if not message_container or message_container.get("key", {}).get("fromMe"):
@@ -197,13 +193,12 @@ def webhook():
         if sender and "@" not in str(sender):
             sender = f"{sender}@s.whatsapp.net"
         
-        print(f"[WEBHOOK] Processing message from: {sender}")
         message_id = key.get("id", "unknown")
         msg_content = message_container.get("message", {})
 
         user_status = get_user_status(sender)
         incoming_text = (msg_content.get("conversation") or msg_content.get("extendedTextMessage", {}).get("text") or "").strip()
-        print(f"[WEBHOOK] Text: {incoming_text} | Status: {user_status}")
+        print(f"[WEBHOOK] {event_type} | From: {sender} | Text: {incoming_text[:50]}... | Status: {user_status}")
         
         # Admin Override
         if is_admin_sender(sender):
