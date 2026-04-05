@@ -99,14 +99,35 @@ def update_registrations():
             if os.path.exists(filepath):
                 file_mtime = os.path.getmtime(filepath)
                 if last_loaded_mtime is None or file_mtime != last_loaded_mtime or REGISTRATIONS_DF is None:
-                    # Using engine='openpyxl' for .xlsx files
-                    new_df = pd.read_excel(filepath)
+                    try:
+                        # Peek at columns to build dtype map
+                        peek_df = pd.read_excel(filepath, nrows=0)
+                        dtype_map = {col: str for col in peek_df.columns if any(x in col.lower() for x in ['cedula', 'document', 'id', 'telefono', 'phone', 'celular'])}
+                        
+                        new_df = pd.read_excel(filepath, dtype=dtype_map)
+                        
+                        # Post-processing for columns that might have been read as float-strings (like "1.23e+10")
+                        for col in new_df.columns:
+                            if any(x in col.lower() for x in ['cedula', 'document', 'id']):
+                                # Clean scientific notation if it exists
+                                def clean_id(x):
+                                    if pd.isna(x): return ""
+                                    s = str(x).strip()
+                                    if '.0' in s: s = s.split('.')[0]
+                                    if 'e+' in s.lower():
+                                        try:
+                                            s = "{:.0f}".format(float(s))
+                                        except: pass
+                                    return s
+                                new_df[col] = new_df[col].apply(clean_id)
+                    except Exception as e:
+                        print(f"[REGISTRATIONS] Robust load failed: {e}")
+                        new_df = pd.read_excel(filepath)
                     
                     if new_df.empty:
                         print("[REGISTRATIONS] Warning: Downloaded registry is empty. Keeping old data.")
                     else:
                         # Normalize column names for flexible detection
-                        cols = {c.strip(): c for c in new_df.columns}
                         cols_lower = {c.lower().strip(): c for c in new_df.columns}
                         
                         # Find Phone Column
@@ -115,7 +136,7 @@ def update_registrations():
                             cols_lower.get('phone') or 
                             cols_lower.get('celular') or 
                             cols_lower.get('mobile') or
-                            'PHONE'
+                            'Telefono'
                         )
                         if phone_col in new_df.columns:
                             new_df['norm_phone'] = new_df[phone_col].apply(normalize_phone)
@@ -125,13 +146,13 @@ def update_registrations():
                             cols_lower.get('first name') or 
                             cols_lower.get('nombre') or 
                             cols_lower.get('first_name') or
-                            'FIRST_NAME'
+                            'First name'
                         )
                         l_col = (
                             cols_lower.get('last name') or 
                             cols_lower.get('apellido') or 
                             cols_lower.get('last_name') or
-                            'LAST_NAME'
+                            'Last name'
                         )
                         
                         if f_col in new_df.columns and l_col in new_df.columns:
@@ -141,13 +162,25 @@ def update_registrations():
                              new_df['full_name'] = new_df[f_col].fillna('').str.lower().str.strip()
                              new_df['full_name_rev'] = new_df['full_name']
                         
+                        # Find Cedula Column
+                        id_col = (
+                            cols_lower.get('cedula') or 
+                            cols_lower.get('documento') or 
+                            cols_lower.get('id_document') or 
+                            cols_lower.get('document_id') or
+                            'Cedula'
+                        )
+                        if id_col in new_df.columns:
+                            new_df['norm_cedula'] = new_df[id_col].astype(str).str.replace(r'\D', '', regex=True)
+
                         # Store identified columns for formatting
                         new_df.attrs['mapped_cols'] = {
                             'first_name': f_col,
                             'last_name': l_col,
                             'phone': phone_col,
                             'competition': cols_lower.get('competition') or cols_lower.get('carrera') or cols_lower.get('race') or 'Competition',
-                            'cedula': cols_lower.get('cedula') or cols_lower.get('documento') or cols_lower.get('id') or 'Cedula'
+                            'cedula': id_col,
+                            'status': cols_lower.get('status') or cols_lower.get('estado') or 'Status'
                         }
                         
                         with REGISTRATIONS_LOCK:
@@ -162,9 +195,12 @@ def update_registrations():
         
         time.sleep(60) # Wake up every minute to check freshness
 
-def format_user_data(row):
-    """Helper to turn a dataframe row into a readable string using mapped columns if available."""
-    # Attempt to get mapped columns from the dataframe attributes
+def format_user_data(row_or_df):
+    """Helper to turn one or more dataframe rows into a readable string."""
+    if row_or_df is None or (isinstance(row_or_df, pd.DataFrame) and row_or_df.empty):
+        return None
+
+    # Attempt to get mapped columns
     mapped = {}
     if REGISTRATIONS_DF is not None and hasattr(REGISTRATIONS_DF, 'attrs'):
         mapped = REGISTRATIONS_DF.attrs.get('mapped_cols', {})
@@ -173,21 +209,27 @@ def format_user_data(row):
     l_col = mapped.get('last_name', 'Last name')
     race_col = mapped.get('competition', 'Competition')
     id_col = mapped.get('cedula', 'Cedula')
+    status_col = mapped.get('status', 'Status')
 
-    f_name = row.get(f_col) or row.get('First Name') or ""
-    l_name = row.get(l_col) or row.get('Last Name') or ""
-    race = row.get(race_col) or row.get('Race') or "N/A"
-    status = "Confirmado" # Njuko export is usually of confirmed entries
-    cedula = row.get(id_col) or row.get('Documento') or "N/A"
+    def row_to_str(row):
+        f_name = row.get(f_col) or row.get('First name') or ""
+        l_name = row.get(l_col) or row.get('Last name') or ""
+        race = row.get(race_col) or row.get('Competition') or "N/A"
+        cedula = row.get(id_col) or row.get('Cedula') or "N/A"
+        status = row.get(status_col) or "Confirmado"
+        return f"Registro: {f_name} {l_name} | Carrera: {race} | Cédula: {cedula} | Estado: {status}"
+
+    if isinstance(row_or_df, pd.Series):
+        return row_to_str(row_or_df)
     
-    return (
-        f"Nombre: {f_name} {l_name}. "
-        f"Carrera: {race}. "
-        f"Estado: {status}. "
-        f"Cédula: {cedula}."
-    )
+    if isinstance(row_or_df, pd.DataFrame):
+        lines = [row_to_str(row) for _, row in row_or_df.iterrows()]
+        return "\n".join(lines)
+
+    return None
 
 def get_user_registration_info(sender_jid):
+    """Checks registration by phone number (JID)."""
     if REGISTRATIONS_DF is None:
         return None
     
@@ -197,26 +239,56 @@ def get_user_registration_info(sender_jid):
 
     with REGISTRATIONS_LOCK:
         if 'norm_phone' in REGISTRATIONS_DF.columns:
-            match = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_phone'] == user_phone]
-            if not match.empty:
-                return format_user_data(match.iloc[0])
+            matches = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_phone'] == user_phone]
+            if not matches.empty:
+                return format_user_data(matches)
+    return None
+
+def search_registrations_by_cedula(cedula_query):
+    """Checks registration by Cedula (strict match on digits)."""
+    if REGISTRATIONS_DF is None:
+        return None
+    
+    clean_cedula = re.sub(r'\D', '', str(cedula_query))
+    if not clean_cedula:
+        return None
+
+    with REGISTRATIONS_LOCK:
+        if 'norm_cedula' in REGISTRATIONS_DF.columns:
+            matches = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_cedula'] == clean_cedula]
+            if not matches.empty:
+                return format_user_data(matches)
     return None
 
 def search_user_by_name(name_query):
+    """
+    Checks registration by name.
+    Now more conservative to prevent hallucinations.
+    """
     if REGISTRATIONS_DF is None:
         return None
     
     query = name_query.lower().strip()
-    if not query:
+    if len(query) < 4: # Too short for a name search
         return None
 
     with REGISTRATIONS_LOCK:
         if 'full_name' in REGISTRATIONS_DF.columns:
-            match = REGISTRATIONS_DF[
+            # Try exact match first
+            exact_matches = REGISTRATIONS_DF[
                 (REGISTRATIONS_DF['full_name'] == query) | 
-                (REGISTRATIONS_DF['full_name_rev'] == query) |
-                (REGISTRATIONS_DF['full_name'].str.contains(query, na=False))
+                (REGISTRATIONS_DF['full_name_rev'] == query)
             ]
-            if not match.empty:
-                return format_user_data(match.iloc[0])
+            if not exact_matches.empty:
+                return format_user_data(exact_matches)
+            
+            # If no exact match, try contains but only if query is long enough
+            if len(query) >= 8:
+                partial_matches = REGISTRATIONS_DF[
+                    REGISTRATIONS_DF['full_name'].str.contains(query, na=False)
+                ]
+                if not partial_matches.empty:
+                    # Limit to top 3 to avoid spamming
+                    return format_user_data(partial_matches.head(3))
+                    
     return None

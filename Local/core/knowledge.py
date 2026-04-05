@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 
 # Load registration info from registrations module
-from core.registrations import get_user_registration_info, search_user_by_name
+from core.registrations import get_user_registration_info, search_user_by_name, search_registrations_by_cedula
 
 # Robust environment loading
 from dotenv import load_dotenv
@@ -87,30 +87,42 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     Hybrid Response Logic with Multi-Provider Fallback.
     """
     # 0. Emergency check for human help keywords
-    help_keywords = {"ayuda", "soporte", "humano", "persona", "agente", "asesor", "joder", "mierda"}
+    help_keywords = {"ayuda", "soporte", "humano", "persona", "agente", "asesor", "joder", "mierda", "estafa", "robo", "fraude"}
     pregunta_lower = pregunta.lower()
     needs_human = any(word in pregunta_lower for word in help_keywords)
 
     # 1. Registration Lookup
+    registration_info = None
+    
+    # Check by Phone (Automatic)
     registration_info = get_user_registration_info(sender_jid) if sender_jid else None
+    
+    # Check by Cedula in text
+    cedula_match = re.search(r"\b(\d{7,10})\b", pregunta)
+    if not registration_info and cedula_match:
+        potential_cedula = cedula_match.group(1)
+        registration_info = search_registrations_by_cedula(potential_cedula)
+        if registration_info:
+            registration_info = f"[DATOS ENCONTRADOS POR CÉDULA {potential_cedula}]:\n{registration_info}"
+
+    # Check by Name (Conservative)
     if not registration_info:
-        name_match = re.search(r"(?i)(?:soy|me llamo|mi nombre es|habla)\s+([a-záéíóúüñ\s]{4,40})", pregunta)
+        name_match = re.search(r"(?i)(?:soy|me llamo|mi nombre es|habla|inscripción de)\s+([a-záéíóúüñ\s]{4,40})", pregunta)
         if name_match:
             potential_name = name_match.group(1).strip()
             registration_info = search_user_by_name(potential_name)
             if registration_info:
-                registration_info = f"[MATCH BY NAME: '{potential_name}'] {registration_info}"
+                registration_info = f"[COINCIDENCIA POR NOMBRE '{potential_name}']:\n{registration_info}"
 
-    registration_context = ""
+    registration_context = "NO se encontró información de registro para este usuario."
     if registration_info:
         registration_context = (
-            "--- DATOS VERIFICADOS DEL USUARIO (REGISTRO NJUKO) ---\n"
-            "Usa estos datos como verdad absoluta:\n"
+            "SÍ se encontró información de registro en Njuko:\n"
             f"{registration_info}\n"
         )
 
     # 2. RAG Lookup
-    faq_context = "--- BASE DE CONOCIMIENTOS (FAQs) ---\n"
+    faq_context = "--- INFORMACIÓN DE FAQs ---\n"
     embeddings, df, documentos = _get_knowledge_base()
     top_faq_answer = None
     best_score = 0
@@ -159,26 +171,27 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     # 3. History Assembly
     history_str = ""
     if history:
-        history_str = "--- HISTORIAL RECIENTE ---\n"
+        history_str = "--- HISTORIAL DE CHAT ---\n"
         for role, content in history:
             label = "Usuario" if role == "user" else "Asistente"
             history_str += f"{label}: {content}\n"
 
     prompt = (
-        "¡Hola runner! Estás a un paso de tu próxima carrera de trail. ¿Quieres ver eventos cercanos, inscribirte o conocer distancias?\n"
-        "Eres el asistente oficial de NaftaEC. Tienes acceso a inscripciones y FAQs.\n"
-        "REGLAS:\n"
-        "1. Sé amable, profesional y muy conciso.\n"
-        "2. Usa los 'DATOS VERIFICADOS' si están presentes.\n"
-        "3. Si no encuentras al usuario en los datos, pide su nombre completo.\n\n"
-        f"{registration_context}\n"
+        "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
+        "REGLAS DE ORO:\n"
+        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para confirmar. ¡No inventes ni pidas datos que ya tienes!\n"
+        "2. Si el usuario pregunta por su estado y NO tienes información, PIDE su cédula.\n"
+        "3. Sé extremadamente conciso y profesional. Responde siempre en Español.\n\n"
         f"{faq_context}\n"
         f"{history_str}\n"
-        f"MENSAJE ACTUAL DEL USUARIO: {pregunta}\n\n"
-        "Asistente:"
+        "--- CONTEXTO DE REGISTRO ACTUAL ---\n"
+        f"{registration_context}\n"
+        "------------------------------------\n\n"
+        f"MENSAJE DEL USUARIO: {pregunta}\n\n"
+        "Instrucción final: Si el registro arriba dice 'SÍ se encontró', confirma los datos al usuario. Si dice 'NO se encontró', dile que no lo hallas y pide su cédula."
     )
 
-    # 4. Gemini Response (Streamlined for preDeployment)
+    # 4. Gemini Response
     try:
         if client:
             print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
@@ -191,25 +204,14 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     except Exception as e:
         print(f"[KNOWLEDGE] Gemini failed: {e}")
 
-    # Legacy Multi-Provider Fallback (Commented out for preDeployment)
-    """
-    models_to_try = [
-        ("gemini", GEMINI_RESPONSE_MODEL),
-        ("groq", GROQ_MODEL),
-        ("openrouter", OPENROUTER_MODEL),
-        ("mistral", MISTRAL_CHAT_MODEL)
-    ]
-    # ... rest of fallback logic preserved for easy restoration
-    """
-
-    # 5. Smart Fallback (if all AI providers failed)
+    # 5. Smart Fallback
     if needs_human:
         return "He notado que podrías necesitar ayuda de un representante. ¿Deseas que te ponga en contacto con un asesor humano de NaftaEC?"
 
     if registration_info:
-        return f"Hola runner, pude verificar tus datos: {registration_info} ¿En qué más puedo ayudarte con tu inscripción?"
+        return f"Hola runner, pude verificar tus datos:\n{registration_info}\n\n¿En qué más puedo ayudarte?"
 
     if top_faq_answer and best_score > 0.6:
         return top_faq_answer
 
-    return "Lo siento, en este momento tengo mucha demanda y no puedo procesar tu solicitud exacta. ¿Deseas consultar sobre inscripciones, pagos o hablar con un asesor?"
+    return "Lo siento, en este momento tengo mucha demanda. Si deseas consultar tu inscripción, por favor envíame tu número de cédula."
