@@ -22,11 +22,10 @@ _BASE_DIR = os.getenv("PERSISTENT_STORAGE_PATH", _DEFAULT_DATA_DIR)
 REPORT_DIR = os.path.join(_BASE_DIR, "reportes_descargados")
 
 def normalize_phone(phone):
-    """Strips all non-digit characters and returns the last 9 digits."""
+    """Strips all non-digit characters and returns the full string of digits."""
     if not phone:
         return ""
-    digits = re.sub(r'\D', '', str(phone))
-    return digits[-9:] if len(digits) >= 9 else digits
+    return "".join(filter(str.isdigit, str(phone)))
 
 def download_report_logic():
     if not os.path.exists(REPORT_DIR):
@@ -236,10 +235,15 @@ def get_user_registration_info(sender_jid):
     user_phone = normalize_phone(sender_jid.split("@")[0])
     if not user_phone:
         return None
+    
+    # We use a suffix check (last 9 digits) for more robust matching 
+    # since registration phones might or might not have +593
+    user_suffix = user_phone[-9:] if len(user_phone) >= 9 else user_phone
 
     with REGISTRATIONS_LOCK:
         if 'norm_phone' in REGISTRATIONS_DF.columns:
-            matches = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_phone'] == user_phone]
+            # Vectorized suffix match
+            matches = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_phone'].str.endswith(user_suffix, na=False)]
             if not matches.empty:
                 return format_user_data(matches)
     return None

@@ -262,8 +262,8 @@ def webhook():
         ).strip()
 
         # Admin / Manual Override: Check this FIRST before skipping fromMe
-        if incoming_text.lower().startswith("#resuelto"):
-            print(f"[ADMIN] Command detected: #resuelto | fromMe: {is_from_me} | Sender: {sender} | Target: {effective_user_jid}")
+        if incoming_text.lower().startswith(("#resuelto", "#resolver")):
+            print(f"[ADMIN] Command detected: {incoming_text.split()[0]} | fromMe: {is_from_me} | Sender: {sender} | Target: {effective_user_jid}")
             # Check if this is an admin OR if the bot is sending it (meaning the account holder is typing)
             if is_from_me or is_admin_sender(sender):
                 if effective_user_jid and not effective_user_jid.endswith("@g.us"):
@@ -280,15 +280,30 @@ def webhook():
                     zip_filename = f"backup_{int(time.time())}.zip"
                     zip_path = os.path.join(MEDIA_DIR, zip_filename)
                     
-                    from core.database import DB_PATH
+                    from core.database import DB_PATH, get_db_connection
                     from core.registrations import REPORT_DIR
                     registry_path = os.path.join(REPORT_DIR, "latest_registry.xlsx")
                     
+                    # Safer SQLite backup for consistency
+                    temp_db_path = f"{zip_path}.db"
+                    try:
+                        with get_db_connection() as conn:
+                            # Create a backup while the DB is in use
+                            backup_conn = sqlite3.connect(temp_db_path)
+                            conn.backup(backup_conn)
+                            backup_conn.close()
+                    except Exception as db_err:
+                        print(f"[ADMIN] DB backup failed, copying file directly: {db_err}")
+                        import shutil
+                        shutil.copy2(DB_PATH, temp_db_path)
+
                     with zipfile.ZipFile(zip_path, 'w') as zipf:
-                        if os.path.exists(DB_PATH):
-                            zipf.write(DB_PATH, arcname="chat_history.db")
+                        if os.path.exists(temp_db_path):
+                            zipf.write(temp_db_path, arcname="chat_history.db")
                         if os.path.exists(registry_path):
                             zipf.write(registry_path, arcname="latest_registry.xlsx")
+                    
+                    if os.path.exists(temp_db_path): os.remove(temp_db_path)
                     
                     # 2. Generate Token
                     token = secrets.token_urlsafe(32)
@@ -298,20 +313,22 @@ def webhook():
                     }
                     
                     # 3. Send via WhatsApp
-                    # Use request.host_url to build the public link
-                    base_url = request.host_url.rstrip('/')
+                    # Support for EXTERNAL_URL (e.g., https://mybot.onrender.com)
+                    base_url = os.getenv("EXTERNAL_URL") or request.host_url.rstrip('/')
+                    if not base_url.startswith("http"): base_url = f"https://{base_url}"
                     download_url = f"{base_url}/download_backup/{token}"
                     
                     target_for_backup = sender if not is_from_me else effective_user_jid
                     send_whatsapp_document(
                         target_for_backup,
-                        "Aquí tienes el respaldo de la base de datos y registros.",
+                        "Aquí tienes el respaldo de la base de datos y registros. El enlace expira en 1 hora.",
                         download_url,
                         "naftaec_backup.zip"
                     )
                     return jsonify({"status": "backup_sent", "token": token})
                 except Exception as e:
-                    print(f"[ADMIN] Backup error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     return jsonify({"status": "backup_error", "message": str(e)}), 500
 
         # Skip messages sent by the bot itself to avoid infinite loops
