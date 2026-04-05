@@ -4,7 +4,11 @@ import json
 import re
 import hmac
 import hashlib
-from flask import Flask, request, jsonify
+import zipfile
+import io
+import secrets
+import time
+from flask import Flask, request, jsonify, send_file
 from dotenv import load_dotenv
 
 # Load environment variables once at entry point
@@ -12,7 +16,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # Core modules
-from core.whatsapp import send_whatsapp_message, download_media, decrypt_and_save_media, normalize_phone
+from core.whatsapp import send_whatsapp_message, send_whatsapp_document, download_media, decrypt_and_save_media, normalize_phone
 from core.knowledge import responder, client
 from core.registrations import update_registrations
 from core.database import (
@@ -22,6 +26,26 @@ from core.database import (
 )
 
 app = Flask(__name__)
+
+# Security: One-time tokens for database download
+BACKUP_TOKENS = {} # token: {"expires": timestamp, "file_path": path}
+
+@app.route("/download_backup/<token>", methods=["GET"])
+def download_backup(token):
+    token_data = BACKUP_TOKENS.get(token)
+    if not token_data:
+        return "Token inválido o expirado", 404
+    
+    if time.time() > token_data["expires"]:
+        del BACKUP_TOKENS[token]
+        return "Token expirado", 403
+    
+    file_path = token_data["file_path"]
+    if not os.path.exists(file_path):
+        return "Archivo no encontrado", 404
+        
+    # We don't delete immediately because WASender needs to fetch it
+    return send_file(file_path, as_attachment=True, download_name="naftaec_backup.zip")
 
 # Inicializamos la base de datos aquí
 init_db()
@@ -132,6 +156,7 @@ def is_authorized_webhook(req):
 def is_admin_sender(sender_jid):
     if not ADMIN_PHONE or not sender_jid:
         return False
+    # sender_jid might be a string or a JID object, ensure it's a string
     sender_phone = normalize_phone(str(sender_jid).split("@")[0])
     if not sender_phone:
         return False
@@ -246,6 +271,48 @@ def webhook():
                     reset_user_status(effective_user_jid)
                     send_whatsapp_message(effective_user_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
                     return jsonify({"status": "admin_resuelto_success", "target": effective_user_jid})
+
+        if incoming_text.lower().startswith("#backup"):
+            print(f"[ADMIN] Command detected: #backup | fromMe: {is_from_me} | Sender: {sender}")
+            if is_from_me or is_admin_sender(sender):
+                try:
+                    # 1. Create Zip in MEDIA_DIR
+                    zip_filename = f"backup_{int(time.time())}.zip"
+                    zip_path = os.path.join(MEDIA_DIR, zip_filename)
+                    
+                    from core.database import DB_PATH
+                    from core.registrations import REPORT_DIR
+                    registry_path = os.path.join(REPORT_DIR, "latest_registry.xlsx")
+                    
+                    with zipfile.ZipFile(zip_path, 'w') as zipf:
+                        if os.path.exists(DB_PATH):
+                            zipf.write(DB_PATH, arcname="chat_history.db")
+                        if os.path.exists(registry_path):
+                            zipf.write(registry_path, arcname="latest_registry.xlsx")
+                    
+                    # 2. Generate Token
+                    token = secrets.token_urlsafe(32)
+                    BACKUP_TOKENS[token] = {
+                        "expires": time.time() + 3600, # 1 hour
+                        "file_path": zip_path
+                    }
+                    
+                    # 3. Send via WhatsApp
+                    # Use request.host_url to build the public link
+                    base_url = request.host_url.rstrip('/')
+                    download_url = f"{base_url}/download_backup/{token}"
+                    
+                    target_for_backup = sender if not is_from_me else effective_user_jid
+                    send_whatsapp_document(
+                        target_for_backup,
+                        "Aquí tienes el respaldo de la base de datos y registros.",
+                        download_url,
+                        "naftaec_backup.zip"
+                    )
+                    return jsonify({"status": "backup_sent", "token": token})
+                except Exception as e:
+                    print(f"[ADMIN] Backup error: {e}")
+                    return jsonify({"status": "backup_error", "message": str(e)}), 500
 
         # Skip messages sent by the bot itself to avoid infinite loops
         if is_from_me:

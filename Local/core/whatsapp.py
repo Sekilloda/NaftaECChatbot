@@ -66,7 +66,7 @@ def decrypt_and_save_media(media_key_b64, encrypted_data, output_path, media_typ
         return False
 
 def normalize_phone(phone):
-    """Strips all non-digit characters."""
+    """Strips all non-digit characters and returns the full string of digits."""
     if not phone:
         return ""
     return "".join(filter(str.isdigit, str(phone)))
@@ -76,8 +76,6 @@ def send_whatsapp_message(recipient, text):
         print("[WHATSAPP] Cannot send message: WASENDER_API_TOKEN is missing.")
         return False
         
-    # WASender usually requires the full JID (number@s.whatsapp.net)
-    # We normalize to ensure we have just the digits followed by the suffix
     clean_recipient = str(recipient).split("@")[0]
     normalized_recipient = "".join(filter(str.isdigit, clean_recipient))
     
@@ -102,4 +100,40 @@ def send_whatsapp_message(recipient, text):
         return response.ok
     except requests.exceptions.RequestException as e:
         print(f"[WHATSAPP] Error sending message to {full_jid}: {e}")
+        return False
+
+def send_whatsapp_document(recipient, text, document_url, file_name):
+    """Sends a document via WASender API using a URL."""
+    if not WASENDER_API_TOKEN:
+        print("[WHATSAPP] Cannot send document: WASENDER_API_TOKEN is missing.")
+        return False
+        
+    clean_recipient = str(recipient).split("@")[0]
+    normalized_recipient = "".join(filter(str.isdigit, clean_recipient))
+    
+    if not normalized_recipient:
+        return False
+
+    full_jid = f"{normalized_recipient}@s.whatsapp.net"
+    
+    payload = {
+        "to": full_jid,
+        "text": text,
+        "documentUrl": document_url,
+        "fileName": file_name
+    }
+    headers = {
+        "Authorization": f"Bearer {WASENDER_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    try:
+        print(f"[WHATSAPP] Sending document ({file_name}) to {full_jid}...")
+        response = requests.post(WASENDER_API_URL, json=payload, headers=headers, timeout=10)
+        if not response.ok:
+            print(f"[WHATSAPP] Failed to send document to {full_jid}: {response.status_code} - {response.text}")
+        else:
+            print(f"[WHATSAPP] Document sent successfully to {full_jid}")
+        return response.ok
+    except Exception as e:
+        print(f"[WHATSAPP] Error sending document to {full_jid}: {e}")
         return False
