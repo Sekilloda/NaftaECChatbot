@@ -119,8 +119,8 @@ def save_validated_registry(registry_data):
     conn = get_db_connection()
     try:
         with conn:
-            conn.execute("""
-                INSERT INTO validated_registries (unique_id, sender_jid, cedula, banco, monto, fecha, numero_comprobante, cuenta_origen)
+            cursor = conn.execute("""
+                INSERT OR IGNORE INTO validated_registries (unique_id, sender_jid, cedula, banco, monto, fecha, numero_comprobante, cuenta_origen)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 registry_data['unique_id'], 
@@ -132,6 +132,7 @@ def save_validated_registry(registry_data):
                 registry_data['numero_comprobante'], 
                 registry_data['cuenta_origen']
             ))
+            return cursor.rowcount > 0
     finally:
         conn.close()
 

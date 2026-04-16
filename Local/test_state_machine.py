@@ -152,5 +152,27 @@ class TestOCRStateMachine(unittest.TestCase):
         # Verify pending cleared
         self.mock_clear_pending.assert_called_with(sender)
 
+    @patch('app.save_validated_registry', return_value=False)
+    def test_final_confirmation_duplicate_registry(self, mock_save_reg):
+        """Duplicate confirmations should not crash and should notify the user."""
+        sender = "12345@s.whatsapp.net"
+        self.mock_get_pending.return_value = {
+            "sender_jid": sender,
+            "state": "OCR_FINAL_CONFIRMATION",
+            "metadata": {
+                "runner_count": 1,
+                "cedulas_collected": ["1712345678"],
+                "ocr_data": {"banco": "Pichincha", "monto": "10.00", "numero_comprobante": "999", "fecha": "01/01/2024", "cuenta_origen": "123"}
+            }
+        }
+
+        res = self.simulate_message(sender, "CONFIRMAR")
+
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(mock_save_reg.called)
+        args, _ = self.mock_send_msg.call_args
+        self.assertIn("ya había sido registrado", args[1])
+        self.mock_clear_pending.assert_called_with(sender)
+
 if __name__ == "__main__":
     unittest.main()
