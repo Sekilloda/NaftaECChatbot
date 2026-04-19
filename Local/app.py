@@ -601,14 +601,25 @@ def _process_single_message_container(message_container):
             return {"status": "ayuda_activated"}, 200
 
     # 4. Help Detection
+    # 4. Help Detection
     needs_help = False
     if client:
         try:
-            help_prompt = f"Determina si el siguiente mensaje indica que el usuario necesita ayuda humana: '{incoming_text}'. Responde: HELP o OK."
+            help_prompt = (
+                f"Analiza este mensaje de WhatsApp: '{incoming_text}'\n\n"
+                "Responde HELP únicamente si el usuario:\n"
+                "- Pide EXPLÍCITAMENTE hablar con una persona, agente, asesor o representante humano\n"
+                "- Expresa frustración fuerte, insultos o acusaciones (estafa, fraude, robo)\n"
+                "- Dice que el bot no le sirve o que quiere salir del bot\n\n"
+                "Responde OK si el usuario simplemente hace una pregunta, aunque sea sobre inscripciones, "
+                "pagos, eventos, precios u cualquier otra consulta normal.\n\n"
+                "Responde SOLO con: HELP o OK"
+            )
             help_res = client.models.generate_content(model=GEMINI_HELP_MODEL, contents=help_prompt)
-            needs_help = "help" in help_res.text.strip().lower()
+            needs_help = help_res.text.strip().upper() == "HELP"  # exact match, no substring
         except Exception:
             pass
+        
 
     if needs_help:
         save_pending_confirmation(effective_user_jid, {"message_id": message_id, "output_path": "", "original_filename": "", "state": "AWAITING_AYUDA_CONFIRMATION", "metadata": {}})
