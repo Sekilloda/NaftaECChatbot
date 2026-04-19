@@ -43,7 +43,13 @@ def _get_knowledge_base():
     global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
     
     if _EMBEDDINGS is None:
+        # Ruta absoluta confirmada por consola
         faq_path = "/app/faqs.xlsx"
+        
+        if not os.path.exists(faq_path):
+            print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
+            return None, None, None
+            
         try:
             _FAQS_DF = pd.read_excel(faq_path)
             _DOCUMENTOS = _FAQS_DF.to_dict(orient="records")
@@ -52,7 +58,7 @@ def _get_knowledge_base():
             if client:
                 print(f"[KNOWLEDGE] Generando embeddings en lotes para {len(descripciones)} filas...")
                 all_embeddings = []
-                # PROCESAR EN LOTES DE 100 (Límite de Google)
+                # PROCESAR EN LOTES DE 100 (Límite estricto de Google)
                 for i in range(0, len(descripciones), 100):
                     lote = descripciones[i:i + 100]
                     res = client.models.embed_content(
@@ -64,8 +70,10 @@ def _get_knowledge_base():
                 
                 _EMBEDDINGS = np.array(all_embeddings)
                 print(f"[KNOWLEDGE] ¡Éxito! {len(_EMBEDDINGS)} vectores generados.")
+            else:
+                print("[KNOWLEDGE] Error: Gemini client not initialized.")
         except Exception as e:
-            print(f"[KNOWLEDGE] Error crítico: {e}")
+            print(f"[KNOWLEDGE] Error crítico cargando base: {e}")
             return None, None, None
             
     return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
@@ -74,40 +82,16 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     """
     Hybrid Response Logic with Multi-Provider Fallback.
     """
-    
-    try:
-        if client:
-            print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
-            res = client.models.generate_content(
-                model=GEMINI_RESPONSE_MODEL, 
-                contents=prompt, 
-                config=types.GenerateContentConfig(temperature=0.7)
-            )
-            
-            respuesta_final = res.text.strip()
-            
-            # --- BLOQUE DE DEBUG INMEDIATO ---
-            # Esto añadirá el contexto exacto al final de cada mensaje de WhatsApp
-            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"
-            return f"{respuesta_final}{debug_info}"
-            # ---------------------------------
-
-    except Exception as e:
-        print(f"[KNOWLEDGE] Gemini failed: {e}")
-
-    
-    # 0. Emergency check for human help keywords
+    # --- 1. DETECCIÓN DE AYUDA HUMANA ---
     help_keywords = {"ayuda", "soporte", "humano", "persona", "agente", "asesor", "joder", "mierda", "estafa", "robo", "fraude"}
     pregunta_lower = pregunta.lower()
     needs_human = any(word in pregunta_lower for word in help_keywords)
 
-    # 1. Registration Lookup
+    # --- 2. BÚSQUEDA DE REGISTRO (NJUKO) ---
     registration_info = None
-    
-    # Check by Phone (Automatic)
     registration_info = get_user_registration_info(sender_jid) if sender_jid else None
     
-    # Check by Cedula in text
+    # Búsqueda por Cédula en el texto
     cedula_match = re.search(r"\b(\d{7,10})\b", pregunta)
     if not registration_info and cedula_match:
         potential_cedula = cedula_match.group(1)
@@ -115,7 +99,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         if registration_info:
             registration_info = f"[DATOS ENCONTRADOS POR CÉDULA {potential_cedula}]:\n{registration_info}"
 
-    # Check by Name (Conservative)
+    # Búsqueda por Nombre
     if not registration_info:
         name_match = re.search(r"(?i)(?:soy|me llamo|mi nombre es|habla|inscripción de)\s+([a-záéíóúüñ\s]{4,40})", pregunta)
         if name_match:
@@ -126,12 +110,9 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
 
     registration_context = "NO se encontró información de registro para este usuario."
     if registration_info:
-        registration_context = (
-            "SÍ se encontró información de registro en Njuko:\n"
-            f"{registration_info}\n"
-        )
+        registration_context = f"SÍ se encontró información de registro en Njuko:\n{registration_info}\n"
 
-    # 2. RAG Lookup
+    # --- 3. RAG LOOKUP (BÚSQUEDA EN EXCEL) ---
     faq_context = "--- INFORMACIÓN DE FAQs ---\n"
     embeddings, df, documentos = _get_knowledge_base()
     top_faq_answer = None
@@ -139,7 +120,6 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     
     if embeddings is not None and client is not None:
         try:
-            # Generate query embedding
             res_query = client.models.embed_content(
                 model=GEMINI_EMBEDDING_MODEL,
                 contents=pregunta,
@@ -149,10 +129,8 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             p_norm = np.linalg.norm(pregunta_emb)
             
             if p_norm > 0:
-                # Manual Cosine Similarity
                 e_norms = np.linalg.norm(embeddings, axis=1)
                 e_norms[e_norms == 0] = 1.0 
-                
                 similitudes = np.dot(embeddings, pregunta_emb.T).flatten() / (e_norms * p_norm)
                 similitudes = np.nan_to_num(similitudes)
                 
@@ -162,73 +140,64 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
                     score = similitudes[idx]
                     if score > 0.6: 
                         item = documentos[idx]
-                        if item["type"] == "faq":
-                            faq_context += f"Pregunta: {item['question']}\nRespuesta: {item['answer']}\n"
-                            found_faq = True
-                            if top_faq_answer is None:
-                                top_faq_answer = str(item.get("answer", "")).strip() or None
-                                best_score = score
+                        faq_context += f"Pregunta: {item['question']}\nRespuesta: {item['answer']}\n"
+                        found_faq = True
+                        if top_faq_answer is None:
+                            top_faq_answer = str(item.get("answer", "")).strip()
+                            best_score = score
                 if not found_faq:
                     faq_context += "No hay una respuesta exacta en las FAQs.\n"
-            else:
-                faq_context += "No se pudo procesar la consulta (vector nulo).\n"
         except Exception as e:
-            print(f"[KNOWLEDGE] RAG Similarity error: {e}")
+            print(f"[KNOWLEDGE] RAG error: {e}")
             faq_context += "Error buscando en FAQs.\n"
     else:
         faq_context += "Base de conocimientos no disponible.\n"
 
-    # 3. History Assembly
+    # --- 4. HISTORIAL ---
     history_str = ""
     if history:
         history_str = "--- HISTORIAL DE CHAT ---\n"
-        for role, content in history:
+        for role, content in history[-10:]: # Tomamos los últimos 10 para no saturar
             label = "Usuario" if role == "user" else "Asistente"
             history_str += f"{label}: {content}\n"
 
-    # Inicializamos el prompt vacío para evitar el error de 'local variable'
-    prompt = "" 
-    
-    # ... (Mantén tu lógica de FAQ_context y History_str igual) ...
-
+    # --- 5. CONSTRUCCIÓN DEL PROMPT (Antes de llamar a Gemini) ---
     prompt = (
         "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
-
         "REGLAS DE ORO:\n"
-
-        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para responder consultas sobre el estado de inscripción. ¡No inventes ni pidas datos que ya tienes!\n"
-
-        "2. Si el usuario hace una pregunta general, saluda, o tiene dudas sobre el evento, responde usando ÚNICAMENTE la 'INFORMACIÓN DE FAQs'. No pidas la cédula para preguntas generales.\n"
-
-        "3. SOLO si el usuario pregunta explícitamente por su estado de inscripción, cupo, o registro, Y el contexto dice 'NO se encontró', entonces dile que no lo hallas y pide su número de cédula.\n"
-
-        "4. Sé extremadamente conciso, amable y profesional. Responde siempre en Español.\n\n"
-        
-        f"{faq_context[:1500]}\n" # Limitamos el contexto para no saturar WhatsApp
-        f"{history_str[-1000:]}\n" # Solo los últimos 1000 caracteres del historial
-        "--- CONTEXTO DE REGISTRO ---\n"
+        "1. Usa 'INFORMACIÓN DE FAQs' para responder dudas generales.\n"
+        "2. Si el registro dice 'SÍ se encontró', úsalo para confirmar datos.\n"
+        "3. Solo pide la cédula si el usuario pregunta por su estado y el registro dice 'NO se encontró'.\n\n"
+        f"{faq_context[:1500]}\n"
+        f"{history_str}\n"
+        "--- CONTEXTO DE REGISTRO ACTUAL ---\n"
         f"{registration_context}\n"
-        f"MENSAJE: {pregunta}"
+        "------------------------------------\n\n"
+        f"MENSAJE DEL USUARIO: {pregunta}\n\n"
+        "Instrucción final: Responde de forma concisa y profesional."
     )
 
+    # --- 6. GENERACIÓN DE RESPUESTA CON GEMINI ---
     try:
         if client:
-            res = client.models.embed_content # (aquí sigue tu llamada normal)
-            # ...
-            res = client.models.generate_content(model=GEMINI_RESPONSE_MODEL, contents=prompt)
+            print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
+            res = client.models.generate_content(
+                model=GEMINI_RESPONSE_MODEL, 
+                contents=prompt, 
+                config=types.GenerateContentConfig(temperature=0.7)
+            )
             respuesta_final = res.text.strip()
             
-            # DEBUG recortado para que WhatsApp lo acepte (Máx 4000 caracteres total)
-            debug_info = f"\n\n--- DEBUG ---\n{prompt}"[:1000] 
+            # Debug limitado para que WhatsApp no rechace el mensaje (máx 4096 caracteres)
+            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"[:800]
             return f"{respuesta_final}{debug_info}"
             
     except Exception as e:
-        print(f"[KNOWLEDGE] Gemini error: {e}")
-        return "Lo siento, tuve un error interno. ¿Puedes repetir tu pregunta?"
+        print(f"[KNOWLEDGE] Gemini failed: {e}")
 
-    # 5. Smart Fallback
+    # --- 7. FALLBACKS (Si Gemini falla o casos especiales) ---
     if needs_human:
-        return "He notado que podrías necesitar ayuda de un representante. ¿Deseas que te ponga en contacto con un asesor humano de NaftaEC?"
+        return "He notado que podrías necesitar ayuda de un representante. ¿Deseas que te ponga en contacto con un asesor humano?"
 
     if registration_info:
         return f"Hola runner, pude verificar tus datos:\n{registration_info}\n\n¿En qué más puedo ayudarte?"
@@ -236,4 +205,4 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     if top_faq_answer and best_score > 0.6:
         return top_faq_answer
 
-    return "Lo siento, en este momento tengo mucha demanda. Si deseas consultar tu inscripción, por favor envíame tu número de cédula."
+    return "Lo siento, tuve un error técnico. Si deseas consultar tu inscripción, por favor envíame tu número de cédula."
