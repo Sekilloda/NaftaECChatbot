@@ -162,19 +162,24 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             history_str += f"{label}: {content}\n"
 
     # --- 5. CONSTRUCCIÓN DEL PROMPT (Antes de llamar a Gemini) ---
+    # --- 5. CONSTRUCCIÓN DEL PROMPT ---
     prompt = (
         "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
-        "REGLAS DE ORO:\n"
-        "1. Usa 'INFORMACIÓN DE FAQs' para responder dudas generales.\n"
-        "2. Si el registro dice 'SÍ se encontró', úsalo para confirmar datos.\n"
-        "3. Solo pide la cédula si el usuario pregunta por su estado y el registro dice 'NO se encontró'.\n\n"
+        "JERARQUÍA DE RESPUESTA:\n"
+        "1. Si el usuario SALUDA (ej: 'Hola', 'Buenos días'), responde ÚNICAMENTE con un saludo amable y pregúntale en qué puedes ayudar. IGNORA las FAQs en este caso.\n"
+        "2. Si el usuario hace una PREGUNTA ESPECÍFICA sobre el evento, usa la 'INFORMACIÓN DE FAQs' de abajo.\n"
+        "3. Si el usuario pregunta por su INSCRIPCIÓN:\n"
+        "   - Si el registro dice 'SÍ se encontró', confirma sus datos.\n"
+        "   - Si dice 'NO se encontró', dile que no lo hallas y pide su cédula.\n\n"
+        "--- INFORMACIÓN DE FAQs ---\n"
         f"{faq_context[:1500]}\n"
+        "--- HISTORIAL ---\n"
         f"{history_str}\n"
-        "--- CONTEXTO DE REGISTRO ACTUAL ---\n"
+        "--- CONTEXTO DE REGISTRO ---\n"
         f"{registration_context}\n"
         "------------------------------------\n\n"
         f"MENSAJE DEL USUARIO: {pregunta}\n\n"
-        "Instrucción final: Responde de forma concisa y profesional."
+        "Instrucción final: Evalúa si el mensaje es un saludo o una duda. No pidas la cédula a menos que sea estrictamente necesario para verificar un registro."
     )
 
     # --- 6. GENERACIÓN DE RESPUESTA CON GEMINI ---
