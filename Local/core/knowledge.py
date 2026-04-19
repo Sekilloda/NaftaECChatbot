@@ -85,7 +85,9 @@ def _get_knowledge_base():
 def responder(pregunta, sender_jid=None, history=None, k=2):
     """
     Hybrid Response Logic with Multi-Provider Fallback.
-    """try:
+    """
+    
+    try:
         if client:
             print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
             res = client.models.generate_content(
@@ -104,6 +106,8 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
 
     except Exception as e:
         print(f"[KNOWLEDGE] Gemini failed: {e}")
+
+    
     # 0. Emergency check for human help keywords
     help_keywords = {"ayuda", "soporte", "humano", "persona", "agente", "asesor", "joder", "mierda", "estafa", "robo", "fraude"}
     pregunta_lower = pregunta.lower()
