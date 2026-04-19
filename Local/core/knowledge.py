@@ -179,16 +179,17 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     prompt = (
         "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
         "REGLAS DE ORO:\n"
-        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para confirmar. ¡No inventes ni pidas datos que ya tienes!\n"
-        "2. Si el usuario pregunta por su estado y NO tienes información, PIDE su cédula.\n"
-        "3. Sé extremadamente conciso y profesional. Responde siempre en Español.\n\n"
+        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para responder consultas sobre el estado de inscripción. ¡No inventes ni pidas datos que ya tienes!\n"
+        "2. Si el usuario hace una pregunta general, saluda, o tiene dudas sobre el evento, responde usando ÚNICAMENTE la 'INFORMACIÓN DE FAQs'. No pidas la cédula para preguntas generales.\n"
+        "3. SOLO si el usuario pregunta explícitamente por su estado de inscripción, cupo, o registro, Y el contexto dice 'NO se encontró', entonces dile que no lo hallas y pide su número de cédula.\n"
+        "4. Sé extremadamente conciso, amable y profesional. Responde siempre en Español.\n\n"
         f"{faq_context}\n"
         f"{history_str}\n"
         "--- CONTEXTO DE REGISTRO ACTUAL ---\n"
         f"{registration_context}\n"
         "------------------------------------\n\n"
         f"MENSAJE DEL USUARIO: {pregunta}\n\n"
-        "Instrucción final: Si el registro arriba dice 'SÍ se encontró', confirma los datos al usuario. Si dice 'NO se encontró', dile que no lo hallas y pide su cédula."
+        "Instrucción final: Evalúa la intención del mensaje del usuario. Si es una duda general o saludo, responde naturalmente. Si está intentando consultar su registro y este 'NO se encontró', pídele su cédula."
     )
 
     # 4. Gemini Response
