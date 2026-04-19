@@ -186,16 +186,24 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             label = "Usuario" if role == "user" else "Asistente"
             history_str += f"{label}: {content}\n"
 
-    def responder(pregunta, sender_jid=None, history=None, k=2):
-    # ... (Mantén tu lógica de ayuda y búsqueda de registro igual) ...
-
     # Inicializamos el prompt vacío para evitar el error de 'local variable'
     prompt = "" 
     
     # ... (Mantén tu lógica de FAQ_context y History_str igual) ...
 
     prompt = (
-        "Eres el asistente virtual de NaftaEC...\n"
+        "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
+
+        "REGLAS DE ORO:\n"
+
+        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para responder consultas sobre el estado de inscripción. ¡No inventes ni pidas datos que ya tienes!\n"
+
+        "2. Si el usuario hace una pregunta general, saluda, o tiene dudas sobre el evento, responde usando ÚNICAMENTE la 'INFORMACIÓN DE FAQs'. No pidas la cédula para preguntas generales.\n"
+
+        "3. SOLO si el usuario pregunta explícitamente por su estado de inscripción, cupo, o registro, Y el contexto dice 'NO se encontró', entonces dile que no lo hallas y pide su número de cédula.\n"
+
+        "4. Sé extremadamente conciso, amable y profesional. Responde siempre en Español.\n\n"
+        
         f"{faq_context[:1500]}\n" # Limitamos el contexto para no saturar WhatsApp
         f"{history_str[-1000:]}\n" # Solo los últimos 1000 caracteres del historial
         "--- CONTEXTO DE REGISTRO ---\n"
@@ -213,6 +221,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             # DEBUG recortado para que WhatsApp lo acepte (Máx 4000 caracteres total)
             debug_info = f"\n\n--- DEBUG ---\n{prompt}"[:1000] 
             return f"{respuesta_final}{debug_info}"
+            
     except Exception as e:
         print(f"[KNOWLEDGE] Gemini error: {e}")
         return "Lo siento, tuve un error interno. ¿Puedes repetir tu pregunta?"
