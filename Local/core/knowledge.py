@@ -44,7 +44,7 @@ def _get_knowledge_base():
     
     if _FAQS_DF is None:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        faq_path = os.path.join(base_dir, "faqs.xlsx")
+        faq_path = "/app/faqs.xlsx"
         
         if not os.path.exists(faq_path):
             print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
