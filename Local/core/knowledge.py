@@ -189,7 +189,8 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             respuesta_final = res.text.strip()
             
             # Debug limitado para que WhatsApp no rechace el mensaje (máx 4096 caracteres)
-            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"[:800]
+            
+            #debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"[:800]
             return f"{respuesta_final}{debug_info}"
             
     except Exception as e:
