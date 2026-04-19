@@ -42,43 +42,44 @@ def call_mistral_chat(prompt, model_id, mistral_key):
 def _get_knowledge_base():
     global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
     
-    if _FAQS_DF is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Intentamos cargar si los embeddings están vacíos
+    if _EMBEDDINGS is None:
         faq_path = "/app/faqs.xlsx"
         
-        if not os.path.exists(faq_path):
-            print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
-            return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
-            
         try:
+            # 1. Cargar el DataFrame
             _FAQS_DF = pd.read_excel(faq_path)
             _DOCUMENTOS = _FAQS_DF.to_dict(orient="records")
             descripciones = [str(d["question"] if d["type"] == "faq" else d["description"]) for d in _DOCUMENTOS]
             
             if client:
-                print(f"[KNOWLEDGE] Generating embeddings via Gemini ({GEMINI_EMBEDDING_MODEL})...")
+                print(f"[KNOWLEDGE] Generando embeddings para {len(descripciones)} filas...")
+                
+                # 2. Llamada a Gemini (Aquí es donde sospecho que falla)
+                # OJO: Asegúrate de que el modelo sea el correcto para tu región/API
                 res = client.models.embed_content(
                     model=GEMINI_EMBEDDING_MODEL,
                     contents=descripciones,
                     config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
                 )
+                
                 _EMBEDDINGS = np.array([e.values for e in res.embeddings])
-                
-                # SANITY CHECK: Detect zero-vectors or NaNs
-                norms = np.linalg.norm(_EMBEDDINGS, axis=1)
-                if np.any(norms == 0):
-                    print("[KNOWLEDGE] CRITICAL: Zero-vectors detected in embeddings!")
-                if np.any(np.isnan(_EMBEDDINGS)):
-                    print("[KNOWLEDGE] WARNING: NaNs detected in embeddings. Cleaning...")
-                    _EMBEDDINGS = np.nan_to_num(_EMBEDDINGS)
-                
-                print(f"[KNOWLEDGE] Knowledge base loaded with {len(_DOCUMENTOS)} items.")
+                print(f"[KNOWLEDGE] Base cargada exitosamente: {len(_DOCUMENTOS)} items.")
             else:
-                print("[KNOWLEDGE] Error: Gemini client not initialized for embeddings.")
-                return None, _FAQS_DF, _DOCUMENTOS
+                return None, None, None
+
         except Exception as e:
-            print(f"[KNOWLEDGE] Error loading knowledge base: {e}")
-            return None, _FAQS_DF, _DOCUMENTOS
+            # 3. CAPTURA DE ERROR CRÍTICO
+            # Si falla, imprimimos el error para verlo en el WhatsApp de debug
+            error_msg = f"ERROR EN EMBEDDINGS: {str(e)}"
+            print(f"[KNOWLEDGE] {error_msg}")
+            
+            # IMPORTANTE: Reseteamos para que no se quede bloqueado en el error
+            _FAQS_DF = None 
+            _DOCUMENTOS = None
+            
+            # Devolvemos el error en lugar de None para que lo veas en el chat
+            return error_msg, None, None
             
     return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
 
