@@ -85,7 +85,25 @@ def _get_knowledge_base():
 def responder(pregunta, sender_jid=None, history=None, k=2):
     """
     Hybrid Response Logic with Multi-Provider Fallback.
-    """
+    """try:
+        if client:
+            print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
+            res = client.models.generate_content(
+                model=GEMINI_RESPONSE_MODEL, 
+                contents=prompt, 
+                config=types.GenerateContentConfig(temperature=0.7)
+            )
+            
+            respuesta_final = res.text.strip()
+            
+            # --- BLOQUE DE DEBUG INMEDIATO ---
+            # Esto añadirá el contexto exacto al final de cada mensaje de WhatsApp
+            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"
+            return f"{respuesta_final}{debug_info}"
+            # ---------------------------------
+
+    except Exception as e:
+        print(f"[KNOWLEDGE] Gemini failed: {e}")
     # 0. Emergency check for human help keywords
     help_keywords = {"ayuda", "soporte", "humano", "persona", "agente", "asesor", "joder", "mierda", "estafa", "robo", "fraude"}
     pregunta_lower = pregunta.lower()
@@ -201,7 +219,15 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
                 contents=prompt, 
                 config=types.GenerateContentConfig(temperature=0.7)
             )
-            return res.text.strip()
+            
+            respuesta_final = res.text.strip()
+            
+            # --- BLOQUE DE DEBUG INMEDIATO ---
+            # Esto añadirá el contexto exacto al final de cada mensaje de WhatsApp
+            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"
+            return f"{respuesta_final}{debug_info}"
+            # ---------------------------------
+
     except Exception as e:
         print(f"[KNOWLEDGE] Gemini failed: {e}")
 
