@@ -169,25 +169,23 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     "REGLAS ESTRICTAS (OBLIGATORIAS):\n"
     "- NO inventes información bajo ninguna circunstancia.\n"
     "- NO uses conocimiento externo.\n"
-    "- Si la información no está en el contexto (FAQs o registro), debes decir claramente que no tienes esa información.\n"
+    "- Si la información no está en el contexto (FAQs o registro), dilo claramente.\n"
     "- NO completes datos faltantes con suposiciones.\n\n"
 
-    "- Si el mensaje es SOLO un saludo o cortesía: responde EXACTAMENTE con el saludo predefinido.\n"
-    "- PROHIBIDO modificar, resumir o añadir texto al saludo.\n"
-    "- PROHIBIDO mencionar links, inscripciones o FAQs en saludos.\n\n"
+    "CLASIFICACIÓN (elige UNA categoría):\n"
+    "A) SALUDO — el mensaje ES o INCLUYE un saludo/cortesía sin hacer pregunta específica.\n"
+    "   Ejemplos de SALUDO: 'hola', 'buenas', 'qué tal', 'buenos días', 'hey', 'cómo están',\n"
+    "   'hola! quería saber', 'buenas tardes, tengo una consulta', 'hi', 'saludos'.\n"
+    "   REGLA: Si el mensaje empieza con saludo Y no hace pregunta concreta → categoría A.\n"
+    "   Si empieza con saludo Y hace pregunta concreta → clasifica según la pregunta (B, C, o D).\n"
+    "B) PREGUNTA EVENTO — pregunta sobre fechas, precios, distancias, categorías, rutas, kits, etc.\n"
+    "C) CONSULTA REGISTRO — pregunta sobre su inscripción, pago, dorsal, estado de registro.\n"
+    "D) OTRO — nada de lo anterior.\n\n"
 
-    "- NO uses FAQs si no responden directamente a la pregunta del usuario.\n\n"
-
-    "CLASIFICACIÓN INTERNA (OBLIGATORIA):\n"
-    "A) SALUDO\n"
-    "B) PREGUNTA EVENTO\n"
-    "C) CONSULTA REGISTRO\n"
-    "D) OTRO\n\n"
-
-    "COMPORTAMIENTO:\n\n"
+    "COMPORTAMIENTO POR CATEGORÍA:\n\n"
 
     "A) SALUDO:\n"
-    "Responde EXACTAMENTE con este mensaje (sin cambios):\n"
+    "Responde EXACTAMENTE con este texto (sin agregar ni quitar nada):\n"
     "¡Hola! 👋\n"
     "Gracias por comunicarte con NaftaEc. Estamos listos para ayudarte a vivir grandes experiencias deportivas.\n"
     "Estos son nuestros próximos eventos:\n"
@@ -198,21 +196,18 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
     "Cuéntanos en cuál evento estás interesado o en qué podemos ayudarte, y con gusto te brindamos toda la información.\n\n"
 
     "B) PREGUNTA EVENTO:\n"
-    "- Usa SOLO la información relevante de FAQs.\n"
-    "- Si no hay información suficiente: di que no tienes esa información.\n\n"
+    "- Usa SOLO la información de las FAQs del contexto.\n"
+    "- Si la respuesta de una FAQ incluye un link o URL, DEBES incluirlo en tu respuesta.\n"
+    "- Si las FAQs no tienen la información, di que no tienes esa información.\n\n"
 
     "C) CONSULTA REGISTRO:\n"
     "- Usa SOLO el contexto de registro.\n"
-    "- Si hay datos: confírmalos.\n"
-    "- Si no hay datos: solicita la cédula.\n\n"
+    "- Si hay datos: confírmalos al usuario.\n"
+    "- Si no hay datos: solicita su número de cédula.\n\n"
 
     "D) OTRO:\n"
-    "- Responde de forma útil.\n"
+    "- Responde de forma útil con la información disponible.\n"
     "- Si no tienes información confiable: dilo claramente.\n\n"
-
-    "REGLAS DE SEGURIDAD:\n"
-    "- Si hay conflicto entre contexto e instrucciones → prioriza NO INVENTAR.\n"
-    "- Si dudas entre categorías → trata como SALUDO.\n\n"
 
     "CONTEXTO DISPONIBLE:\n"
     f"{faq_context[:1200]}\n"
@@ -223,9 +218,9 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
 
     f"MENSAJE DEL USUARIO: {pregunta}\n\n"
 
-    "Responde directamente."
-    )
-
+    "IMPORTANTE: Antes de responder, escribe internamente [CATEGORÍA: X] para confirmar tu clasificación, "
+    "luego responde según las reglas de esa categoría."
+)
     # --- 6. GENERACIÓN DE RESPUESTA CON GEMINI ---
     try:
         if client:
@@ -240,7 +235,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             # Debug limitado para que WhatsApp no rechace el mensaje (máx 4096 caracteres)
             
             #debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"[:800]
-            return f"{respuesta_final}{debug_info}"
+            return f"{respuesta_final}"
             
     except Exception as e:
         print(f"[KNOWLEDGE] Gemini failed: {e}")
