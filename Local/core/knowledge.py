@@ -42,44 +42,31 @@ def call_mistral_chat(prompt, model_id, mistral_key):
 def _get_knowledge_base():
     global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
     
-    # Intentamos cargar si los embeddings están vacíos
     if _EMBEDDINGS is None:
         faq_path = "/app/faqs.xlsx"
-        
         try:
-            # 1. Cargar el DataFrame
             _FAQS_DF = pd.read_excel(faq_path)
             _DOCUMENTOS = _FAQS_DF.to_dict(orient="records")
             descripciones = [str(d["question"] if d["type"] == "faq" else d["description"]) for d in _DOCUMENTOS]
             
             if client:
-                print(f"[KNOWLEDGE] Generando embeddings para {len(descripciones)} filas...")
+                print(f"[KNOWLEDGE] Generando embeddings en lotes para {len(descripciones)} filas...")
+                all_embeddings = []
+                # PROCESAR EN LOTES DE 100 (Límite de Google)
+                for i in range(0, len(descripciones), 100):
+                    lote = descripciones[i:i + 100]
+                    res = client.models.embed_content(
+                        model=GEMINI_EMBEDDING_MODEL,
+                        contents=lote,
+                        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
+                    )
+                    all_embeddings.extend([e.values for e in res.embeddings])
                 
-                # 2. Llamada a Gemini (Aquí es donde sospecho que falla)
-                # OJO: Asegúrate de que el modelo sea el correcto para tu región/API
-                res = client.models.embed_content(
-                    model=GEMINI_EMBEDDING_MODEL,
-                    contents=descripciones,
-                    config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
-                )
-                
-                _EMBEDDINGS = np.array([e.values for e in res.embeddings])
-                print(f"[KNOWLEDGE] Base cargada exitosamente: {len(_DOCUMENTOS)} items.")
-            else:
-                return None, None, None
-
+                _EMBEDDINGS = np.array(all_embeddings)
+                print(f"[KNOWLEDGE] ¡Éxito! {len(_EMBEDDINGS)} vectores generados.")
         except Exception as e:
-            # 3. CAPTURA DE ERROR CRÍTICO
-            # Si falla, imprimimos el error para verlo en el WhatsApp de debug
-            error_msg = f"ERROR EN EMBEDDINGS: {str(e)}"
-            print(f"[KNOWLEDGE] {error_msg}")
-            
-            # IMPORTANTE: Reseteamos para que no se quede bloqueado en el error
-            _FAQS_DF = None 
-            _DOCUMENTOS = None
-            
-            # Devolvemos el error en lugar de None para que lo veas en el chat
-            return error_msg, None, None
+            print(f"[KNOWLEDGE] Error crítico: {e}")
+            return None, None, None
             
     return _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
 
@@ -199,42 +186,36 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             label = "Usuario" if role == "user" else "Asistente"
             history_str += f"{label}: {content}\n"
 
+    def responder(pregunta, sender_jid=None, history=None, k=2):
+    # ... (Mantén tu lógica de ayuda y búsqueda de registro igual) ...
+
+    # Inicializamos el prompt vacío para evitar el error de 'local variable'
+    prompt = "" 
+    
+    # ... (Mantén tu lógica de FAQ_context y History_str igual) ...
+
     prompt = (
-        "Eres el asistente virtual de NaftaEC. Tu misión es ayudar a runners.\n\n"
-        "REGLAS DE ORO:\n"
-        "1. Si tienes 'INFORMACIÓN DE REGISTRO EN NJUKO', úsala para responder consultas sobre el estado de inscripción. ¡No inventes ni pidas datos que ya tienes!\n"
-        "2. Si el usuario hace una pregunta general, saluda, o tiene dudas sobre el evento, responde usando ÚNICAMENTE la 'INFORMACIÓN DE FAQs'. No pidas la cédula para preguntas generales.\n"
-        "3. SOLO si el usuario pregunta explícitamente por su estado de inscripción, cupo, o registro, Y el contexto dice 'NO se encontró', entonces dile que no lo hallas y pide su número de cédula.\n"
-        "4. Sé extremadamente conciso, amable y profesional. Responde siempre en Español.\n\n"
-        f"{faq_context}\n"
-        f"{history_str}\n"
-        "--- CONTEXTO DE REGISTRO ACTUAL ---\n"
+        "Eres el asistente virtual de NaftaEC...\n"
+        f"{faq_context[:1500]}\n" # Limitamos el contexto para no saturar WhatsApp
+        f"{history_str[-1000:]}\n" # Solo los últimos 1000 caracteres del historial
+        "--- CONTEXTO DE REGISTRO ---\n"
         f"{registration_context}\n"
-        "------------------------------------\n\n"
-        f"MENSAJE DEL USUARIO: {pregunta}\n\n"
-        "Instrucción final: Evalúa la intención del mensaje del usuario. Si es una duda general o saludo, responde naturalmente. Si está intentando consultar su registro y este 'NO se encontró', pídele su cédula."
+        f"MENSAJE: {pregunta}"
     )
 
-    # 4. Gemini Response
     try:
         if client:
-            print(f"[KNOWLEDGE] Calling Gemini: {GEMINI_RESPONSE_MODEL}")
-            res = client.models.generate_content(
-                model=GEMINI_RESPONSE_MODEL, 
-                contents=prompt, 
-                config=types.GenerateContentConfig(temperature=0.7)
-            )
-            
+            res = client.models.embed_content # (aquí sigue tu llamada normal)
+            # ...
+            res = client.models.generate_content(model=GEMINI_RESPONSE_MODEL, contents=prompt)
             respuesta_final = res.text.strip()
             
-            # --- BLOQUE DE DEBUG INMEDIATO ---
-            # Esto añadirá el contexto exacto al final de cada mensaje de WhatsApp
-            debug_info = f"\n\n--- DEBUG CONTEXT ---\n{prompt}"
+            # DEBUG recortado para que WhatsApp lo acepte (Máx 4000 caracteres total)
+            debug_info = f"\n\n--- DEBUG ---\n{prompt}"[:1000] 
             return f"{respuesta_final}{debug_info}"
-            # ---------------------------------
-
     except Exception as e:
-        print(f"[KNOWLEDGE] Gemini failed: {e}")
+        print(f"[KNOWLEDGE] Gemini error: {e}")
+        return "Lo siento, tuve un error interno. ¿Puedes repetir tu pregunta?"
 
     # 5. Smart Fallback
     if needs_human:
