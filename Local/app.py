@@ -605,18 +605,41 @@ def _process_single_message_container(message_container):
     needs_help = False
     if client:
         try:
-            help_prompt = (
-                f"Analiza este mensaje de WhatsApp: '{incoming_text}'\n\n"
-                "Responde HELP únicamente si el usuario:\n"
-                "- Pide EXPLÍCITAMENTE hablar con una persona, agente, asesor o representante humano\n"
-                "- Expresa frustración fuerte, insultos o acusaciones (estafa, fraude, robo)\n"
-                "- Dice que el bot no le sirve o que quiere salir del bot\n\n"
-                "Responde OK si el usuario simplemente hace una pregunta, aunque sea sobre inscripciones, "
-                "pagos, eventos, precios u cualquier otra consulta normal.\n\n"
-                "Responde SOLO con: HELP o OK"
-            )
+           help_prompt = (
+            f"Analiza este mensaje de WhatsApp: '{incoming_text}'\n\n"
+            
+            "Tu tarea es clasificar si el caso debe derivarse a un asesor humano.\n\n"
+            
+            "Responde HELP si el usuario:\n"
+            "- Quiere hablar con una persona, asesor, agente, representante o humano\n"
+            "- Da a entender que necesita atención personalizada\n"
+            "- Está confundido y necesita más ayuda de la que el bot puede dar\n"
+            "- Expresa molestia, frustración, enojo, desconfianza o reclama un problema\n"
+            "- Dice que el bot no le ayuda, no entiende la respuesta, o quiere salir del bot\n"
+            "- Insiste en el mismo problema sin resolverse\n\n"
+            
+            "Responde OK si el usuario:\n"
+            "- Solo hace una consulta normal\n"
+            "- Pide información general\n"
+            "- Pregunta por precios, pagos, eventos, horarios, inscripciones o requisitos\n"
+            "- Hace preguntas que el bot sí podría responder\n\n"
+            
+            "Ejemplos:\n"
+            "- 'quiero hablar con alguien' -> HELP\n"
+            "- 'me pasan con un asesor?' -> HELP\n"
+            "- 'no entiendo' -> HELP\n"
+            "- 'esto no me sirve' -> HELP\n"
+            "- 'cuánto cuesta?' -> OK\n"
+            "- 'qué requisitos hay?' -> OK\n\n"
+            
+            "Reglas:\n"
+            "- Si hay duda entre HELP y OK, responde HELP\n"
+            "- Responde una sola palabra, sin explicación\n"
+            "- Responde SOLO con: HELP o OK"
+        )
             help_res = client.models.generate_content(model=GEMINI_HELP_MODEL, contents=help_prompt)
-            needs_help = help_res.text.strip().upper() == "HELP"  # exact match, no substring
+            response_text = help_res.text.strip().upper()
+            needs_help = response_text.startswith("HELP")
         except Exception:
             pass
         
