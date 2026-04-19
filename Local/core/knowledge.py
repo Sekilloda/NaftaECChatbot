@@ -138,7 +138,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
                 found_faq = False
                 for idx in top_k_idx:
                     score = similitudes[idx]
-                    if score > 0.6: 
+                    if score > 0.5: 
                         item = documentos[idx]
                         faq_context += f"Pregunta: {item['question']}\nRespuesta: {item['answer']}\n"
                         found_faq = True
