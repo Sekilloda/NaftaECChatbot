@@ -371,12 +371,30 @@ def _process_single_message_container(message_container):
     if pending and pending["state"].startswith("OCR_"):
         save_message(effective_user_jid, "user", incoming_text)
 
+        # Definimos el mapa de carreras para el menú
+        RACE_MAP = {
+            1: "Aqua & Fuego Trail",
+            2: "Ruta del Hielero",
+            3: "Rio 21K",
+            4: "Altar Reto Trail"
+        }
+
         # 1. OCR Edit Mode
         if pending["state"] == "OCR_EDIT_MODE":
             if incoming_text.lower() == "correcto":
-                save_pending_confirmation(effective_user_jid, {**pending, "state": "OCR_AWAITING_RUNNER_COUNT"})
-                send_whatsapp_message(effective_user_jid, "¿A cuántos corredores corresponde esta transacción?")
-                return {"status": "ocr_confirmed"}, 200
+                pending["state"] = "OCR_AWAITING_RACE_SELECTION"
+                save_pending_confirmation(effective_user_jid, pending)
+                
+                menu = (
+                    "¡Datos confirmados!\n\n"
+                    "¿Para cuáles carreras es este pago? Responde con el *número* correspondiente (Ej: si son dos carreras, responde '1 y 3'):\n\n"
+                    "1. Aqua & Fuego Trail\n"
+                    "2. Ruta del Hielero\n"
+                    "3. Rio 21K\n"
+                    "4. Altar Reto Trail"
+                )
+                send_whatsapp_message(effective_user_jid, menu)
+                return {"status": "ocr_confirmed_asking_races"}, 200
 
             # Handle specific field updates
             match = re.match(r"(?i)^(banco|fecha|cuenta|cuenta origen)\s*:\s*(.*)", incoming_text)
@@ -412,92 +430,191 @@ def _process_single_message_container(message_container):
             send_whatsapp_message(effective_user_jid, "Por favor, para editar usa el formato 'Campo: Valor' (ej: Banco: Pichincha) o responde 'Correcto' si todo está bien.")
             return {"status": "ocr_waiting_valid_input"}, 200
 
-        # 2. Awaiting Runner Count
-        if pending["state"] == "OCR_AWAITING_RUNNER_COUNT":
+        # 2. Seleccion de Carreras
+        if pending["state"] == "OCR_AWAITING_RACE_SELECTION":
+            # Extraer todos los números del 1 al 4 del mensaje
+            numeros_elegidos = [int(d) for d in re.findall(r'[1-4]', incoming_text)]
+            # Eliminar duplicados manteniendo orden
+            carreras_seleccionadas = list(dict.fromkeys(numeros_elegidos))
+            
+            if not carreras_seleccionadas:
+                send_whatsapp_message(effective_user_jid, "Por favor, responde con un número válido del menú (1, 2, 3 o 4).")
+                return {"status": "invalid_race_selection"}, 200
+                
+            pending["metadata"]["selected_races"] = carreras_seleccionadas
+            pending["metadata"]["current_race_idx"] = 0
+            pending["metadata"]["runners_collected"] = []
+            pending["state"] = "OCR_AWAITING_RUNNER_COUNT_FOR_RACE"
+            save_pending_confirmation(effective_user_jid, pending)
+            
+            primera_carrera = RACE_MAP[carreras_seleccionadas[0]]
+            send_whatsapp_message(effective_user_jid, f"Perfecto. Empecemos con *{primera_carrera}*.\n\n¿A cuántos corredores vas a inscribir en esta carrera?")
+            return {"status": "race_selection_received"}, 200
+
+        # 3. Cantidad de corredores por carrera específica
+        if pending["state"] == "OCR_AWAITING_RUNNER_COUNT_FOR_RACE":
             try:
                 count = int(re.sub(r"\D", "", incoming_text))
-                if count <= 0 or count > 10:
+                if count <= 0 or count > 50:
                     raise ValueError()
 
-                pending["metadata"]["runner_count"] = count
-                pending["metadata"]["cedulas_collected"] = []
-                pending["state"] = "OCR_AWAITING_CEDULAS"
+                pending["metadata"]["current_race_target"] = count
+                pending["metadata"]["current_race_collected"] = 0
+                pending["state"] = "OCR_AWAITING_RUNNER_DETAILS_FOR_RACE"
                 save_pending_confirmation(effective_user_jid, pending)
 
-                send_whatsapp_message(effective_user_jid, f"Entendido ({count} corredores). Por favor, ingresa el primer Número de cédula:")
-                return {"status": "ocr_count_received"}, 200
+                idx = pending["metadata"]["current_race_idx"]
+                carrera_actual = RACE_MAP[pending["metadata"]["selected_races"][idx]]
+                
+                msg = (
+                    f"Entendido ({count} corredores para {carrera_actual}).\n\n"
+                    "Por favor envíame los datos del *primer corredor* usando este formato:\n\n"
+                    "Cédula - Distancia\n\n"
+                    "*(Ejemplo: 1712345678 - 10K)*"
+                )
+                send_whatsapp_message(effective_user_jid, msg)
+                return {"status": "ocr_count_received_for_race"}, 200
             except Exception:
-                send_whatsapp_message(effective_user_jid, "Por favor, ingresa un número válido de corredores (1-10).")
+                send_whatsapp_message(effective_user_jid, "Por favor, ingresa un número válido de corredores para esta carrera.")
                 return {"status": "ocr_invalid_count"}, 200
 
-        # 3. Awaiting Cedulas
-        if pending["state"] == "OCR_AWAITING_CEDULAS":
-            cedula = re.sub(r"\D", "", incoming_text)
+        # 4. Detalles (Cedula - Distancia)
+        if pending["state"] == "OCR_AWAITING_RUNNER_DETAILS_FOR_RACE":
+            parts = [p.strip() for p in incoming_text.split("-")]
+            if len(parts) != 2:
+                send_whatsapp_message(effective_user_jid, "❌ Formato incorrecto. Por favor usa: Cédula - Distancia (Ej: 1712345678 - 15K)")
+                return {"status": "ocr_invalid_runner_format"}, 200
+
+            cedula, distancia = parts
+            cedula = re.sub(r"\D", "", cedula)
             if len(cedula) < 5:
-                send_whatsapp_message(effective_user_jid, "El número de cédula parece inválido. Inténtalo de nuevo.")
+                send_whatsapp_message(effective_user_jid, "❌ Cédula inválida. Inténtalo de nuevo.")
                 return {"status": "ocr_invalid_cedula"}, 200
 
-            collected = pending["metadata"].get("cedulas_collected", [])
-            collected.append(cedula)
-            pending["metadata"]["cedulas_collected"] = collected
+            idx = pending["metadata"]["current_race_idx"]
+            carrera_actual = RACE_MAP[pending["metadata"]["selected_races"][idx]]
 
-            target_count = pending["metadata"].get("runner_count", 1)
-            if len(collected) < target_count:
+            # Guardar corredor
+            collected = pending["metadata"].get("runners_collected", [])
+            collected.append({
+                "cedula": cedula, 
+                "carrera": carrera_actual, 
+                "distancia": distancia
+            })
+            pending["metadata"]["runners_collected"] = collected
+            
+            current_race_collected = pending["metadata"].get("current_race_collected", 0) + 1
+            pending["metadata"]["current_race_collected"] = current_race_collected
+            target_count = pending["metadata"].get("current_race_target", 1)
+
+            # ¿Faltan corredores en esta carrera?
+            if current_race_collected < target_count:
                 save_pending_confirmation(effective_user_jid, pending)
-                send_whatsapp_message(effective_user_jid, f"Cédula recibida ({len(collected)}/{target_count}). Ingresa la siguiente:")
+                send_whatsapp_message(effective_user_jid, f"✅ Datos guardados. Ingresa los datos del corredor {current_race_collected + 1} para *{carrera_actual}* (Cédula - Distancia):")
+                return {"status": "ocr_runner_received"}, 200
+            
+            # Si ya terminamos esta carrera, ¿hay otra carrera en la lista?
+            next_idx = idx + 1
+            if next_idx < len(pending["metadata"]["selected_races"]):
+                pending["metadata"]["current_race_idx"] = next_idx
+                pending["state"] = "OCR_AWAITING_RUNNER_COUNT_FOR_RACE"
+                save_pending_confirmation(effective_user_jid, pending)
+                
+                siguiente_carrera = RACE_MAP[pending["metadata"]["selected_races"][next_idx]]
+                send_whatsapp_message(effective_user_jid, f"✅ Finalizamos con {carrera_actual}.\n\nAhora pasemos a *{siguiente_carrera}*.\n¿A cuántos corredores vas a inscribir en esta carrera?")
+                return {"status": "moving_to_next_race"}, 200
+
+            # Si ya terminamos TODAS las carreras, calculamos
+            from core.validador import calcular_precio_final
+            total_calculado, detalles = calcular_precio_final(collected)
+            
+            if total_calculado is None:
+                # Si hay error en la distancia de la última persona, echamos hacia atrás 1 paso
+                pending["metadata"]["runners_collected"].pop()
+                pending["metadata"]["current_race_collected"] -= 1
+                save_pending_confirmation(effective_user_jid, pending)
+                send_whatsapp_message(effective_user_jid, f"❌ Error de distancia: {detalles}\nPor favor, ingresa nuevamente los datos de este corredor con una distancia válida para {carrera_actual}.")
+                return {"status": "ocr_invalid_race_data"}, 200
+
+            pending["metadata"]["detalle_calculo"] = detalles
+            pending["metadata"]["total_calculado"] = total_calculado
+            pending["state"] = "OCR_FINAL_CONFIRMATION"
+            save_pending_confirmation(effective_user_jid, pending)
+
+            ocr_data = pending["metadata"]["ocr_data"]
+            monto_ocr_str = str(ocr_data.get("monto", "0")).replace(",", ".")
+            monto_ocr = float(re.sub(r"[^\d.]", "", monto_ocr_str) or 0)
+            
+            runners_str = "\n".join([f"- {c['cedula']} | {c['carrera']} {c['distancia']} (Paga: ${c['precio_final']})" for c in detalles])
+            
+            diferencia = monto_ocr - total_calculado
+            if abs(diferencia) < 0.01:
+                analisis = "✅ *PAGO EXACTO VALIDADo*"
+            elif diferencia > 0:
+                analisis = f"⚠️ *SALDO A FAVOR:* Sobran ${diferencia:.2f}"
             else:
-                pending["state"] = "OCR_FINAL_CONFIRMATION"
-                save_pending_confirmation(effective_user_jid, pending)
+                analisis = f"⚠️ *PAGO INCOMPLETO:* Faltan ${abs(diferencia):.2f}"
 
-                ocr_data = pending["metadata"]["ocr_data"]
-                cedulas_str = "\n".join([f"- {c}" for c in collected])
-                summary = (
-                    f"📝 *RESUMEN FINAL DE REGISTRO*\n\n"
-                    f"{format_ocr_data(ocr_data)}\n"
-                    f"👥 Cédulas de corredores ({len(collected)}):\n{cedulas_str}\n\n"
-                    "¿Confirmas que toda la información es correcta? Responde 'CONFIRMAR' para finalizar o 'REINTENTAR' para empezar de nuevo."
-                )
-                send_whatsapp_message(effective_user_jid, summary)
-            return {"status": "ocr_all_cedulas_received"}, 200
+            summary = (
+                f"📝 *RESUMEN FINAL DE INSCRIPCIÓN*\n\n"
+                f"👥 Corredores ({len(detalles)}):\n{runners_str}\n\n"
+                f"💰 Costo Total Calculado: ${total_calculado:.2f}\n"
+                f"💵 Monto en comprobante: ${monto_ocr:.2f}\n"
+                f"{analisis}\n\n"
+                "¿Confirmas el registro? Responde 'CONFIRMAR' para finalizar o 'REINTENTAR' para cancelar todo."
+            )
+            send_whatsapp_message(effective_user_jid, summary)
+            return {"status": "ocr_all_runners_received"}, 200
 
-        # 4. Final Confirmation Handler
+        # 5. Final Confirmation Handler
         if pending["state"] == "OCR_FINAL_CONFIRMATION":
             if "confirmar" in incoming_text.lower() or "si" == incoming_text.lower():
                 ocr_data = pending["metadata"].get("ocr_data", {})
-                collected = pending["metadata"].get("cedulas_collected", [])
+                detalles = pending["metadata"].get("detalle_calculo", [])
+                total_calculado = pending["metadata"].get("total_calculado", 0.0)
+
+                monto_ocr_str = str(ocr_data.get("monto", "0")).replace(",", ".")
+                monto_ocr = float(re.sub(r"[^\d.]", "", monto_ocr_str) or 0)
+                diferencia = monto_ocr - total_calculado
+                
+                estado = "VALIDADO" if abs(diferencia) < 0.01 else "REVISION_MANUAL"
 
                 inserted_count = 0
-                total_count = len(collected)
+                total_count = len(detalles)
 
-                for cedula in collected:
+                for corredor in detalles:
                     comprobante = ocr_data.get("numero_comprobante", "")
-                    monto = ocr_data.get("monto", "")
-                    unique_id = hash_registry({"cedula": cedula, "num": comprobante, "monto": monto})
+                    unique_id = hash_registry({"cedula": corredor["cedula"], "num": comprobante, "monto": str(monto_ocr)})
+                    
                     inserted = save_validated_registry({
                         "unique_id": unique_id,
                         "sender_jid": effective_user_jid,
-                        "cedula": cedula,
+                        "cedula": corredor["cedula"],
                         "banco": ocr_data.get("banco", ""),
-                        "monto": monto,
+                        "monto": str(monto_ocr),
                         "fecha": ocr_data.get("fecha", ""),
                         "numero_comprobante": comprobante,
-                        "cuenta_origen": ocr_data.get("cuenta_origen", "")
+                        "cuenta_origen": ocr_data.get("cuenta_origen", ""),
+                        "carrera": corredor["carrera"],
+                        "distancia": corredor["distancia"],
+                        "precio_base": corredor["precio_base"],
+                        "descuento_aplicado": corredor["descuento_aplicado"],
+                        "monto_calculado": corredor["precio_final"],
+                        "estado_pago": estado
                     })
                     if inserted:
                         inserted_count += 1
 
                 if total_count == 0:
-                    response_message = "No encontré cédulas para registrar. Por favor, reintenta el proceso."
-                elif inserted_count == total_count:
-                    response_message = "Comprobante registrado exitosamente."
-                elif inserted_count == 0:
-                    response_message = "Este comprobante ya había sido registrado anteriormente."
+                    response_message = "No encontré datos para registrar. Por favor, reintenta el proceso."
+                elif estado == "VALIDADO":
+                    response_message = "✅ ¡Inscripción registrada exitosamente con pago exacto! Nos vemos en la meta."
                 else:
-                    response_message = f"Comprobante registrado parcialmente ({inserted_count}/{total_count} nuevos registros)."
+                    response_message = f"⚠️ Comprobante registrado. Existe una diferencia de pago (${diferencia:.2f}). Tu caso ha sido enviado a *REVISIÓN MANUAL* y un asesor se pondrá en contacto contigo."
 
                 send_whatsapp_message(effective_user_jid, response_message)
                 clear_pending_confirmation(effective_user_jid)
-                return {"status": "ocr_final_success", "inserted": inserted_count, "total": total_count}, 200
+                return {"status": "ocr_final_success"}, 200
 
             if "reintentar" in incoming_text.lower() or "no" == incoming_text.lower():
                 clear_pending_confirmation(effective_user_jid)
@@ -601,7 +718,6 @@ def _process_single_message_container(message_container):
             return {"status": "ayuda_activated"}, 200
 
     # 4. Help Detection
-    # 4. Help Detection
     needs_help = False
     if client:
         try:
@@ -631,7 +747,7 @@ def _process_single_message_container(message_container):
                 "- Si hay duda entre HELP y OK, responde HELP\n"
                 "- Responde una sola palabra, sin explicación\n"
                 "- Responde SOLO con: HELP o OK"
-        )
+            )
             help_res = client.models.generate_content(model=GEMINI_HELP_MODEL, contents=help_prompt)
             response_text = help_res.text.strip().upper()
             needs_help = response_text.startswith("HELP")
