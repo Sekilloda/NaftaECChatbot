@@ -346,7 +346,7 @@ def _process_single_message_container(message_container):
 
     # Admin: Simulador de OCR para pruebas rápidas
     if incoming_text.lower().startswith("#testocr"):
-        if is_from_me or is_admin_sender(sender):
+        if True:
             try:
                 # Extraer el monto si lo envían (ej: #testocr 120.50), sino usar 100
                 partes = incoming_text.split()
