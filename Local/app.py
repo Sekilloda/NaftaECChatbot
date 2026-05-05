@@ -344,6 +344,43 @@ def _process_single_message_container(message_container):
                 traceback.print_exc()
                 return {"status": "backup_error", "message": str(e)}, 500
 
+    # Admin: Simulador de OCR para pruebas rápidas
+    if incoming_text.lower().startswith("#testocr"):
+        if is_from_me or is_admin_sender(sender):
+            try:
+                # Extraer el monto si lo envían (ej: #testocr 120.50), sino usar 100
+                partes = incoming_text.split()
+                monto_simulado = partes[1] if len(partes) > 1 else "100.00"
+
+                fake_pending = {
+                    "message_id": f"test_{int(time.time())}",
+                    "output_path": "fake.jpg",
+                    "original_filename": "fake.jpg",
+                    "state": "OCR_EDIT_MODE",
+                    "metadata": {
+                        "ocr_data": {
+                            "banco": "Banco de Prueba",
+                            "monto": monto_simulado,
+                            "fecha": "2026-05-05",
+                            "numero_comprobante": "999999",
+                            "cuenta_origen": "123456"
+                        }
+                    }
+                }
+                save_pending_confirmation(effective_user_jid, fake_pending)
+
+                msg = (
+                    f"🛠️ *[MODO PRUEBA ACTIVO]*\n"
+                    f"He simulado la lectura de un comprobante.\n\n"
+                    f"{format_ocr_data(fake_pending['metadata']['ocr_data'])}\n\n"
+                    f"¿Deseas corregir algún campo (Banco, Fecha, Cuenta Origen) o es 'Correcto'?"
+                )
+                send_whatsapp_message(effective_user_jid, msg)
+                return {"status": "test_ocr_triggered"}, 200
+            except Exception as e:
+                send_whatsapp_message(effective_user_jid, f"Error en test: {str(e)}")
+                return {"status": "error_test"}, 500
+
     # Skip messages sent by the bot itself to avoid infinite loops
     if is_from_me:
         return {"status": "skipped_from_me"}, 200
