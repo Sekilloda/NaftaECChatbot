@@ -48,6 +48,12 @@ def init_db():
                     fecha TEXT,
                     numero_comprobante TEXT,
                     cuenta_origen TEXT,
+                    carrera TEXT,
+                    distancia TEXT,
+                    precio_base REAL,
+                    descuento_aplicado REAL,
+                    monto_calculado REAL,
+                    estado_pago TEXT DEFAULT 'VALIDADO',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 );
             """)
@@ -120,17 +126,26 @@ def save_validated_registry(registry_data):
     try:
         with conn:
             cursor = conn.execute("""
-                INSERT OR IGNORE INTO validated_registries (unique_id, sender_jid, cedula, banco, monto, fecha, numero_comprobante, cuenta_origen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO validated_registries (
+                    unique_id, sender_jid, cedula, banco, monto, fecha, numero_comprobante, cuenta_origen,
+                    carrera, distancia, precio_base, descuento_aplicado, monto_calculado, estado_pago
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                registry_data['unique_id'], 
-                registry_data['sender_jid'], 
-                registry_data['cedula'], 
-                registry_data['banco'], 
-                registry_data['monto'], 
-                registry_data['fecha'], 
-                registry_data['numero_comprobante'], 
-                registry_data['cuenta_origen']
+                registry_data.get('unique_id'), 
+                registry_data.get('sender_jid'), 
+                registry_data.get('cedula'), 
+                registry_data.get('banco'), 
+                registry_data.get('monto'), 
+                registry_data.get('fecha'), 
+                registry_data.get('numero_comprobante'), 
+                registry_data.get('cuenta_origen'),
+                registry_data.get('carrera', ''),
+                registry_data.get('distancia', ''),
+                registry_data.get('precio_base', 0.0),
+                registry_data.get('descuento_aplicado', 0.0),
+                registry_data.get('monto_calculado', 0.0),
+                registry_data.get('estado_pago', 'VALIDADO')
             ))
             return cursor.rowcount > 0
     finally:
