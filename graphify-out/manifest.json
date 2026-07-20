@@ -1,0 +1,462 @@
+{
+  "Local/app.py": {
+    "mtime": 1784579409.1106198,
+    "ast_hash": "a16e1e10b37518a891ee3e738fe4dc51",
+    "semantic_hash": "a16e1e10b37518a891ee3e738fe4dc51"
+  },
+  "Local/core/database.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "07174884da509d07fde759a758b66b2c",
+    "semantic_hash": "07174884da509d07fde759a758b66b2c"
+  },
+  "Local/core/knowledge.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "a0e24f61eb95865af423ea9643b13b31",
+    "semantic_hash": "a0e24f61eb95865af423ea9643b13b31"
+  },
+  "Local/core/ocr.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "04386b23d935e1d59e5327b48f08954d",
+    "semantic_hash": "04386b23d935e1d59e5327b48f08954d"
+  },
+  "Local/core/registrations.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "40e80a87f3033bd387140adfe7f2a71d",
+    "semantic_hash": "40e80a87f3033bd387140adfe7f2a71d"
+  },
+  "Local/core/validador.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "57be3deb7a23e480868a72ee537b7022",
+    "semantic_hash": "57be3deb7a23e480868a72ee537b7022"
+  },
+  "Local/core/whatsapp.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "1b887e2e497071d006129be9eb6fdf94",
+    "semantic_hash": "1b887e2e497071d006129be9eb6fdf94"
+  },
+  "Local/debug_registrations.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "758f7077a1d1d96d2e11302761e02a2c",
+    "semantic_hash": "758f7077a1d1d96d2e11302761e02a2c"
+  },
+  "Local/run.sh": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "a74ed4240974456cf804b0c4d4f055d0",
+    "semantic_hash": "a74ed4240974456cf804b0c4d4f055d0"
+  },
+  "Local/run_linux.sh": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "5eeacb7c1e7147cefba4042716ebdab2",
+    "semantic_hash": "5eeacb7c1e7147cefba4042716ebdab2"
+  },
+  "Local/run_macos.sh": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "cf306c945b59e8f2d0861a49a074e4b9",
+    "semantic_hash": "cf306c945b59e8f2d0861a49a074e4b9"
+  },
+  "Local/runfedora.sh": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "5d427e29b228fedd4e1ef414a5531843",
+    "semantic_hash": "5d427e29b228fedd4e1ef414a5531843"
+  },
+  "Local/simulation/run_simulation.py": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "0e66bfc14d7d827553ef94c93cb71b65",
+    "semantic_hash": "0e66bfc14d7d827553ef94c93cb71b65"
+  },
+  "Local/simulation/validation_engine.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "da9ffef1ea95302a82bcbf02aa8f8f81",
+    "semantic_hash": "da9ffef1ea95302a82bcbf02aa8f8f81"
+  },
+  "Local/start.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "bd8e015a1d5368ca88951de9f90860af",
+    "semantic_hash": "bd8e015a1d5368ca88951de9f90860af"
+  },
+  "Local/test_admin_backup.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "50905b366be9fbbe8a930c5b01d7079f",
+    "semantic_hash": "50905b366be9fbbe8a930c5b01d7079f"
+  },
+  "Local/test_database.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "8838e5dc2a71374a879bccf203f4f4fc",
+    "semantic_hash": "8838e5dc2a71374a879bccf203f4f4fc"
+  },
+  "Local/test_hashing.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "0d55c428ab8628035d49c0f5f60fdf1c",
+    "semantic_hash": "0d55c428ab8628035d49c0f5f60fdf1c"
+  },
+  "Local/test_infra.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "bbe32fb8f0661f8367075beb25e2658c",
+    "semantic_hash": "bbe32fb8f0661f8367075beb25e2658c"
+  },
+  "Local/test_ocr_accuracy.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "2278f079fb90d3ee44d1b03a295957dd",
+    "semantic_hash": "2278f079fb90d3ee44d1b03a295957dd"
+  },
+  "Local/test_registration_flow.py": {
+    "mtime": 1784579409.1126056,
+    "ast_hash": "0cc15371dc1815bbc204ed942ab7dc82",
+    "semantic_hash": "0cc15371dc1815bbc204ed942ab7dc82"
+  },
+  "Local/test_state_machine.py": {
+    "mtime": 1784579409.11362,
+    "ast_hash": "66bfdd64a3b54c2c588169c1a116dd0f",
+    "semantic_hash": "66bfdd64a3b54c2c588169c1a116dd0f"
+  },
+  "Local/test_webhook_security.py": {
+    "mtime": 1784579409.11362,
+    "ast_hash": "8174f838edb816f204ecfe493e4d9353",
+    "semantic_hash": "8174f838edb816f204ecfe493e4d9353"
+  },
+  "validate.sh": {
+    "mtime": 1784579409.11362,
+    "ast_hash": "97b9a92008d3515557956fb73f554720",
+    "semantic_hash": "97b9a92008d3515557956fb73f554720"
+  },
+  "GEMINI.md": {
+    "mtime": 1784579409.094066,
+    "ast_hash": "dc0418b049167ae6b6065d63674164df",
+    "semantic_hash": "dc0418b049167ae6b6065d63674164df"
+  },
+  "Local/ocr_params.txt": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "b1f84a0a9d10ae9a6b85cf0962eee954",
+    "semantic_hash": "b1f84a0a9d10ae9a6b85cf0962eee954"
+  },
+  "Local/requirements_base.txt": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "8a5d575a714551bc64e24f27f2afe959",
+    "semantic_hash": "8a5d575a714551bc64e24f27f2afe959"
+  },
+  "Local/requirements_linux.txt": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "2d20fffc8bb0ea9eb25238d2d49fdb72",
+    "semantic_hash": "2d20fffc8bb0ea9eb25238d2d49fdb72"
+  },
+  "Local/requirements_macos.txt": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "2d20fffc8bb0ea9eb25238d2d49fdb72",
+    "semantic_hash": "2d20fffc8bb0ea9eb25238d2d49fdb72"
+  },
+  "Local/requirements_windows.txt": {
+    "mtime": 1784579409.1117885,
+    "ast_hash": "e878d88db265ec5728326bd1bfb46072",
+    "semantic_hash": "e878d88db265ec5728326bd1bfb46072"
+  },
+  "README.md": {
+    "mtime": 1784579409.11362,
+    "ast_hash": "ef9cc3ca06bec4e851268a4ce324ff05",
+    "semantic_hash": "ef9cc3ca06bec4e851268a4ce324ff05"
+  },
+  "Local/OCRTestDataSet/receipts/receipt10.jpeg": {
+    "mtime": 1784579409.0948408,
+    "ast_hash": "d688965b8b4ae0ed83f2f972ad4524e1",
+    "semantic_hash": "d688965b8b4ae0ed83f2f972ad4524e1"
+  },
+  "Local/OCRTestDataSet/receipts/receipt11.jpeg": {
+    "mtime": 1784579409.0962346,
+    "ast_hash": "038eb092a02d77c3019f85c33656d0a4",
+    "semantic_hash": "038eb092a02d77c3019f85c33656d0a4"
+  },
+  "Local/OCRTestDataSet/receipts/receipt12.jpeg": {
+    "mtime": 1784579409.0962346,
+    "ast_hash": "b74d8a6272477bcb525c3bb4f30ca9ec",
+    "semantic_hash": "b74d8a6272477bcb525c3bb4f30ca9ec"
+  },
+  "Local/OCRTestDataSet/receipts/receipt13.jpeg": {
+    "mtime": 1784579409.0962346,
+    "ast_hash": "4012203e86184ca4833704d978d6b7b4",
+    "semantic_hash": "4012203e86184ca4833704d978d6b7b4"
+  },
+  "Local/OCRTestDataSet/receipts/receipt14.jpeg": {
+    "mtime": 1784579409.0966191,
+    "ast_hash": "8b0fc194824930952114391b498bdd8c",
+    "semantic_hash": "8b0fc194824930952114391b498bdd8c"
+  },
+  "Local/OCRTestDataSet/receipts/receipt15.jpeg": {
+    "mtime": 1784579409.0966191,
+    "ast_hash": "5e8b26d840913c8ec8334e738536713d",
+    "semantic_hash": "5e8b26d840913c8ec8334e738536713d"
+  },
+  "Local/OCRTestDataSet/receipts/receipt16.jpeg": {
+    "mtime": 1784579409.0976193,
+    "ast_hash": "88d554ca72bd37bdc871d53775e96201",
+    "semantic_hash": "88d554ca72bd37bdc871d53775e96201"
+  },
+  "Local/OCRTestDataSet/receipts/receipt17.jpeg": {
+    "mtime": 1784579409.0976193,
+    "ast_hash": "476a2d0fb975aae94bcc46da8dcd9653",
+    "semantic_hash": "476a2d0fb975aae94bcc46da8dcd9653"
+  },
+  "Local/OCRTestDataSet/receipts/receipt18.jpeg": {
+    "mtime": 1784579409.0986192,
+    "ast_hash": "12d31998f1b60c8e4ef0d47818c393a1",
+    "semantic_hash": "12d31998f1b60c8e4ef0d47818c393a1"
+  },
+  "Local/OCRTestDataSet/receipts/receipt19.jpeg": {
+    "mtime": 1784579409.0986192,
+    "ast_hash": "b01abcf62bf7e5cd4f8d5ff5aa3fecdd",
+    "semantic_hash": "b01abcf62bf7e5cd4f8d5ff5aa3fecdd"
+  },
+  "Local/OCRTestDataSet/receipts/receipt20.jpeg": {
+    "mtime": 1784579409.0986192,
+    "ast_hash": "6edf33824238ae065a846d24fcc206e2",
+    "semantic_hash": "6edf33824238ae065a846d24fcc206e2"
+  },
+  "Local/OCRTestDataSet/receipts/receipt21.jpeg": {
+    "mtime": 1784579409.0996194,
+    "ast_hash": "21a6c66312d8243015e13518337aa6b2",
+    "semantic_hash": "21a6c66312d8243015e13518337aa6b2"
+  },
+  "Local/OCRTestDataSet/receipts/receipt22.jpeg": {
+    "mtime": 1784579409.0996194,
+    "ast_hash": "f87be2c6a5ae75898338d102b2a758b1",
+    "semantic_hash": "f87be2c6a5ae75898338d102b2a758b1"
+  },
+  "Local/OCRTestDataSet/receipts/receipt23.jpeg": {
+    "mtime": 1784579409.0996194,
+    "ast_hash": "608b2459aca53c0944dc61a61ca8d1dc",
+    "semantic_hash": "608b2459aca53c0944dc61a61ca8d1dc"
+  },
+  "Local/OCRTestDataSet/receipts/receipt24.jpeg": {
+    "mtime": 1784579409.0996194,
+    "ast_hash": "ea1afbe3af66777c3251fa1f99a47410",
+    "semantic_hash": "ea1afbe3af66777c3251fa1f99a47410"
+  },
+  "Local/OCRTestDataSet/receipts/receipt25.jpeg": {
+    "mtime": 1784579409.0996194,
+    "ast_hash": "17b5110f49cfdd94809a382473d6d238",
+    "semantic_hash": "17b5110f49cfdd94809a382473d6d238"
+  },
+  "Local/OCRTestDataSet/receipts/receipt26.jpeg": {
+    "mtime": 1784579409.1006193,
+    "ast_hash": "e7b8344cf57f558f5f60b79ad4c5f3e7",
+    "semantic_hash": "e7b8344cf57f558f5f60b79ad4c5f3e7"
+  },
+  "Local/OCRTestDataSet/receipts/receipt27.jpeg": {
+    "mtime": 1784579409.1006193,
+    "ast_hash": "8ab9841c9dbf8e62016b107f71007ae4",
+    "semantic_hash": "8ab9841c9dbf8e62016b107f71007ae4"
+  },
+  "Local/OCRTestDataSet/receipts/receipt28.jpeg": {
+    "mtime": 1784579409.1006193,
+    "ast_hash": "f3797d281d14298389d8768cd8bb2d64",
+    "semantic_hash": "f3797d281d14298389d8768cd8bb2d64"
+  },
+  "Local/OCRTestDataSet/receipts/receipt29.jpeg": {
+    "mtime": 1784579409.1006193,
+    "ast_hash": "f3e226c01f614cfa5b4b34c183da57d4",
+    "semantic_hash": "f3e226c01f614cfa5b4b34c183da57d4"
+  },
+  "Local/OCRTestDataSet/receipts/receipt30.jpeg": {
+    "mtime": 1784579409.1016195,
+    "ast_hash": "c6e3a01b255dfffc342479ade92026be",
+    "semantic_hash": "c6e3a01b255dfffc342479ade92026be"
+  },
+  "Local/OCRTestDataSet/receipts/receipt31.jpeg": {
+    "mtime": 1784579409.1016195,
+    "ast_hash": "b57b7bfd9308240f019af85dae0a6cf5",
+    "semantic_hash": "b57b7bfd9308240f019af85dae0a6cf5"
+  },
+  "Local/OCRTestDataSet/receipts/receipt32.jpeg": {
+    "mtime": 1784579409.1016195,
+    "ast_hash": "648c0e4fa17ed5d030cccea7a6e93a81",
+    "semantic_hash": "648c0e4fa17ed5d030cccea7a6e93a81"
+  },
+  "Local/OCRTestDataSet/receipts/receipt33.jpeg": {
+    "mtime": 1784579409.1016195,
+    "ast_hash": "722fce126c1aa8b16ab183ddc4d0e381",
+    "semantic_hash": "722fce126c1aa8b16ab183ddc4d0e381"
+  },
+  "Local/OCRTestDataSet/receipts/receipt34.jpeg": {
+    "mtime": 1784579409.1026194,
+    "ast_hash": "82413cd0a6835c03d377567993f12168",
+    "semantic_hash": "82413cd0a6835c03d377567993f12168"
+  },
+  "Local/OCRTestDataSet/receipts/receipt35.jpeg": {
+    "mtime": 1784579409.1026194,
+    "ast_hash": "ec04f9c59aa436c9eca52de9d495149f",
+    "semantic_hash": "ec04f9c59aa436c9eca52de9d495149f"
+  },
+  "Local/OCRTestDataSet/receipts/receipt36.jpeg": {
+    "mtime": 1784579409.1026194,
+    "ast_hash": "27a7075872dd0d912990d9f3c34289d9",
+    "semantic_hash": "27a7075872dd0d912990d9f3c34289d9"
+  },
+  "Local/OCRTestDataSet/receipts/receipt37.jpeg": {
+    "mtime": 1784579409.1026194,
+    "ast_hash": "76fbd9f1f795f8e214ce24e637998eb2",
+    "semantic_hash": "76fbd9f1f795f8e214ce24e637998eb2"
+  },
+  "Local/OCRTestDataSet/receipts/receipt38.jpeg": {
+    "mtime": 1784579409.1036196,
+    "ast_hash": "fa44e99d9e9e3ce06fcef1c3e2887977",
+    "semantic_hash": "fa44e99d9e9e3ce06fcef1c3e2887977"
+  },
+  "Local/OCRTestDataSet/receipts/receipt39.jpeg": {
+    "mtime": 1784579409.1036196,
+    "ast_hash": "72419dc202c790a5d227df6a5b2530cf",
+    "semantic_hash": "72419dc202c790a5d227df6a5b2530cf"
+  },
+  "Local/OCRTestDataSet/receipts/receipt40.jpeg": {
+    "mtime": 1784579409.1036196,
+    "ast_hash": "a2b774ab160748f5415a3c5e328d7981",
+    "semantic_hash": "a2b774ab160748f5415a3c5e328d7981"
+  },
+  "Local/OCRTestDataSet/receipts/receipt41.jpeg": {
+    "mtime": 1784579409.1036196,
+    "ast_hash": "58c6d0b1ab4cf56ab228000995b7f891",
+    "semantic_hash": "58c6d0b1ab4cf56ab228000995b7f891"
+  },
+  "Local/OCRTestDataSet/receipts/receipt42.jpeg": {
+    "mtime": 1784579409.1036196,
+    "ast_hash": "a5aaa51a7069d1b18262ab22ecdb5140",
+    "semantic_hash": "a5aaa51a7069d1b18262ab22ecdb5140"
+  },
+  "Local/OCRTestDataSet/receipts/receipt43.jpeg": {
+    "mtime": 1784579409.1046195,
+    "ast_hash": "03fdfb02a5a4d0a8b14e772e9684c103",
+    "semantic_hash": "03fdfb02a5a4d0a8b14e772e9684c103"
+  },
+  "Local/OCRTestDataSet/receipts/receipt44.jpeg": {
+    "mtime": 1784579409.1046195,
+    "ast_hash": "585a1b62d9e9eef7c66d21f2fbf7eb0f",
+    "semantic_hash": "585a1b62d9e9eef7c66d21f2fbf7eb0f"
+  },
+  "Local/OCRTestDataSet/receipts/receipt45.jpeg": {
+    "mtime": 1784579409.1046195,
+    "ast_hash": "67f52ca9566646af7f697b4cf0996a41",
+    "semantic_hash": "67f52ca9566646af7f697b4cf0996a41"
+  },
+  "Local/OCRTestDataSet/receipts/receipt46.jpeg": {
+    "mtime": 1784579409.1046195,
+    "ast_hash": "acce21a53b8a1bced528b94a4f0cfe63",
+    "semantic_hash": "acce21a53b8a1bced528b94a4f0cfe63"
+  },
+  "Local/OCRTestDataSet/receipts/receipt47.jpeg": {
+    "mtime": 1784579409.1056197,
+    "ast_hash": "9e5c5004c10d93f8ee4044e341e7858a",
+    "semantic_hash": "9e5c5004c10d93f8ee4044e341e7858a"
+  },
+  "Local/OCRTestDataSet/receipts/receipt48.jpeg": {
+    "mtime": 1784579409.1056197,
+    "ast_hash": "8653ab41d57115281d6e9536ed98aa54",
+    "semantic_hash": "8653ab41d57115281d6e9536ed98aa54"
+  },
+  "Local/OCRTestDataSet/receipts/receipt49.jpeg": {
+    "mtime": 1784579409.1056197,
+    "ast_hash": "d4bdb5807a8a8a5d15db30072a375a7f",
+    "semantic_hash": "d4bdb5807a8a8a5d15db30072a375a7f"
+  },
+  "Local/OCRTestDataSet/receipts/receipt50.jpeg": {
+    "mtime": 1784579409.1056197,
+    "ast_hash": "56fe74087411731fcbb702b8a5ded05b",
+    "semantic_hash": "56fe74087411731fcbb702b8a5ded05b"
+  },
+  "Local/OCRTestDataSet/receipts/receipt51.jpeg": {
+    "mtime": 1784579409.1066196,
+    "ast_hash": "175bf028b84becd98df19ccb73581967",
+    "semantic_hash": "175bf028b84becd98df19ccb73581967"
+  },
+  "Local/OCRTestDataSet/receipts/receipt52.jpeg": {
+    "mtime": 1784579409.1066196,
+    "ast_hash": "ad84acdf8ce2c8147ae269de1dbdf98c",
+    "semantic_hash": "ad84acdf8ce2c8147ae269de1dbdf98c"
+  },
+  "Local/OCRTestDataSet/receipts/receipt53.jpeg": {
+    "mtime": 1784579409.1066196,
+    "ast_hash": "ee07c874e4bc4049e84457175e335307",
+    "semantic_hash": "ee07c874e4bc4049e84457175e335307"
+  },
+  "Local/OCRTestDataSet/receipts/receipt54.jpeg": {
+    "mtime": 1784579409.1066196,
+    "ast_hash": "6d7c21942ee63ae5c9e46b05f67401be",
+    "semantic_hash": "6d7c21942ee63ae5c9e46b05f67401be"
+  },
+  "Local/OCRTestDataSet/receipts/receipt55.jpeg": {
+    "mtime": 1784579409.1076198,
+    "ast_hash": "cb6d3854ba2b496223a0231453c5160e",
+    "semantic_hash": "cb6d3854ba2b496223a0231453c5160e"
+  },
+  "Local/OCRTestDataSet/receipts/receipt56.jpeg": {
+    "mtime": 1784579409.1076198,
+    "ast_hash": "4f6ab45c76a99637607dc90b3dccf769",
+    "semantic_hash": "4f6ab45c76a99637607dc90b3dccf769"
+  },
+  "Local/OCRTestDataSet/receipts/receipt57.jpeg": {
+    "mtime": 1784579409.1076198,
+    "ast_hash": "48c90b92d576c1e4b135a2aba7b2034d",
+    "semantic_hash": "48c90b92d576c1e4b135a2aba7b2034d"
+  },
+  "Local/OCRTestDataSet/receipts/receipt58.jpeg": {
+    "mtime": 1784579409.1076198,
+    "ast_hash": "e7188b9fd4d7cbcbacf01cc3ecfe1790",
+    "semantic_hash": "e7188b9fd4d7cbcbacf01cc3ecfe1790"
+  },
+  "Local/OCRTestDataSet/receipts/receipt59.jpeg": {
+    "mtime": 1784579409.1076198,
+    "ast_hash": "5d03f18204e71ebed871fc9e3991830f",
+    "semantic_hash": "5d03f18204e71ebed871fc9e3991830f"
+  },
+  "Local/OCRTestDataSet/receipts/receipt60.jpeg": {
+    "mtime": 1784579409.1086197,
+    "ast_hash": "0dfbe9a0c113e45fbfe57527a5c9dbef",
+    "semantic_hash": "0dfbe9a0c113e45fbfe57527a5c9dbef"
+  },
+  "Local/OCRTestDataSet/receipts/receipt61.jpeg": {
+    "mtime": 1784579409.1086197,
+    "ast_hash": "ba6565cf76807b93834d8a2f0f2e5c8c",
+    "semantic_hash": "ba6565cf76807b93834d8a2f0f2e5c8c"
+  },
+  "Local/OCRTestDataSet/receipts/receipt62.jpeg": {
+    "mtime": 1784579409.1086197,
+    "ast_hash": "4aa72072517bd497a207dd2f43556be0",
+    "semantic_hash": "4aa72072517bd497a207dd2f43556be0"
+  },
+  "Local/OCRTestDataSet/receipts/receipt63.jpeg": {
+    "mtime": 1784579409.1086197,
+    "ast_hash": "b5cf8311ee7607649bc6b844332b902e",
+    "semantic_hash": "b5cf8311ee7607649bc6b844332b902e"
+  },
+  "Local/OCRTestDataSet/receipts/receipt64.jpeg": {
+    "mtime": 1784579409.1096199,
+    "ast_hash": "f9c5049207ac943eb28afad51ca3f39a",
+    "semantic_hash": "f9c5049207ac943eb28afad51ca3f39a"
+  },
+  "Local/OCRTestDataSet/receipts/receipt65.jpeg": {
+    "mtime": 1784579409.1096199,
+    "ast_hash": "25a39e26c18a3f9aaf6961cd51f26753",
+    "semantic_hash": "25a39e26c18a3f9aaf6961cd51f26753"
+  },
+  "Local/OCRTestDataSet/receipts/receipt66.jpeg": {
+    "mtime": 1784579409.1096199,
+    "ast_hash": "bcd532fa85bc826a363f5071c4da90fe",
+    "semantic_hash": "bcd532fa85bc826a363f5071c4da90fe"
+  },
+  "Local/OCRTestDataSet/receipts/receipt67.jpeg": {
+    "mtime": 1784579409.1096199,
+    "ast_hash": "3785f2a52896894d2589c7dedbd7faaf",
+    "semantic_hash": "3785f2a52896894d2589c7dedbd7faaf"
+  },
+  "Local/OCRTestDataSet/receipts/receipt68.jpeg": {
+    "mtime": 1784579409.1096199,
+    "ast_hash": "765bb8565a1028735ebfc3a8d2083dbc",
+    "semantic_hash": "765bb8565a1028735ebfc3a8d2083dbc"
+  },
+  "Local/OCRTestDataSet/receipts/receipt69.jpeg": {
+    "mtime": 1784579409.1106198,
+    "ast_hash": "ab7180efcd7feea4908bca8a3dac61d9",
+    "semantic_hash": "ab7180efcd7feea4908bca8a3dac61d9"
+  },
+  "Local/OCRTestDataSet/receipts/receipt70.jpeg": {
+    "mtime": 1784579409.1106198,
+    "ast_hash": "ce2829b2ceadfa2be2c37ae36c8632fa",
+    "semantic_hash": "ce2829b2ceadfa2be2c37ae36c8632fa"
+  }
+}
