@@ -18,7 +18,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # Core modules
 from core.whatsapp import send_whatsapp_message, send_whatsapp_document, normalize_phone
-from core.knowledge import responder
+from core.knowledge import responder, summarize_history
 from core.registrations import update_registrations
 from core.database import (
     init_db, save_message, get_last_messages,
@@ -377,7 +377,13 @@ def _process_single_message_container(message_container):
             if ADMIN_PHONE:
                 clean_phone = effective_user_jid.split("@")[0]
                 wa_link = f"https://wa.me/{clean_phone}"
-                admin_msg = f"🚨 *SOLICITUD DE AYUDA HUMANA*\n\n👤 *Nombre:* {user_name}\n📱 *Teléfono:* {clean_phone}\n🔗 *Chat:* {wa_link}"
+                
+                # Obtener las últimas conversaciones y resumirlas
+                history = get_last_messages(effective_user_jid, limit=20)
+                history_tuples = [(m["role"], m["content"]) for m in history]
+                resumen = summarize_history(history_tuples)
+                
+                admin_msg = f"🚨 *SOLICITUD DE AYUDA HUMANA*\n\n👤 *Nombre:* {user_name}\n📱 *Teléfono:* {clean_phone}\n🔗 *Chat:* {wa_link}\n\n📝 *Resumen del contexto:*\n_{resumen}_"
 
                 primary_admin = re.split(r"[,;\s]+", ADMIN_PHONE)[0].strip()
                 send_whatsapp_message(primary_admin, admin_msg)

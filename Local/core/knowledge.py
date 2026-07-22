@@ -170,9 +170,10 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         "- NO inventes información. Usa SOLO el contexto proporcionado.\n"
         "- Si la información no está disponible, dilo claramente.\n"
         "- Incluye links/URLs cuando estén en las FAQs.\n"
-        "- Usa emojis con moderación para mantener un tono cercano.\n\n"
+        "- Usa emojis con moderación para mantener un tono cercano.\n"
+        "- NUNCA incluyas la letra ni el nombre de la categoría en tu respuesta. Responde directamente de forma natural.\n\n"
 
-        "CLASIFICA el mensaje en UNA categoría y responde según sus reglas:\n\n"
+        "Elige mentalmente UNA de las siguientes categorías y genera SOLO la respuesta final según sus reglas (NO escribas el nombre de la categoría en el mensaje):\n\n"
 
         "A) SALUDO — saludo o cortesía sin pregunta concreta.\n"
         "   → Responde con:\n"
@@ -204,6 +205,11 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         "   seguido de un mensaje empático ofreciendo contactar a un representante.\n"
         "   Ejemplo: [HELP] Entiendo tu frustración. ¿Te gustaría que te ponga\n"
         "   en contacto con un representante que pueda ayudarte directamente?\n\n"
+        
+        "F) DESPEDIDA / SATISFACCIÓN — el usuario agradece, se despide,\n"
+        "   o indica que ya resolvió su duda (ej. 'gracias', 'todo claro', 'perfecto').\n"
+        "   → Responde cordialmente despidiéndote en nombre de NaftaEC.\n"
+        "   → Ejemplo: '¡Fue un gusto atenderte desde NaftaEC! 🏃‍♂️ Si tienes alguna otra duda en el futuro, aquí estaremos. ¡Que tengas un excelente día!'\n\n"
 
         "CONTEXTO DISPONIBLE:\n"
         f"{faq_context[:1500]}\n"
@@ -244,3 +250,32 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         return top_faq_answer
 
     return "Lo siento, tuve un error técnico. Si deseas consultar tu inscripción, por favor envíame tu número de cédula."
+
+def summarize_history(history):
+    if not client or not history:
+        return "No hay contexto de conversación disponible."
+    
+    history_str = ""
+    for role, content in history:
+        label = "Usuario" if role == "user" else "Asistente"
+        history_str += f"{label}: {content}\n"
+        
+    prompt = (
+        "Por favor, genera un resumen muy breve y conciso (máximo 3 oraciones) de la siguiente conversación "
+        "entre un usuario y el asistente virtual de NaftaEC.\n"
+        "El objetivo es que un agente humano pueda leer este resumen y entender rápidamente qué estaba "
+        "intentando hacer el usuario y por qué pidió ayuda humana.\n\n"
+        "Conversación:\n"
+        f"{history_str}"
+    )
+    
+    try:
+        res = client.models.generate_content(
+            model=GEMINI_RESPONSE_MODEL, 
+            contents=prompt, 
+            config=types.GenerateContentConfig(temperature=0.3)
+        )
+        return res.text.strip()
+    except Exception as e:
+        print(f"[KNOWLEDGE] Summarization failed: {e}")
+        return "No se pudo generar el resumen debido a un error técnico."
