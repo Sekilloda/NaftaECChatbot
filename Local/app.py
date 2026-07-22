@@ -390,8 +390,8 @@ def _process_single_message_container(message_container):
     response = responder(incoming_text, sender_jid=effective_user_jid, history=[(m["role"], m["content"]) for m in history])
 
     # Si responder() detectó necesidad de ayuda humana (prefijo [HELP])
-    if response.startswith("[HELP]"):
-        response_clean = response[6:].strip()
+    if "[HELP]" in response:
+        response_clean = response.split("[HELP]")[-1].strip()
         save_message(effective_user_jid, "assistant", response_clean)
         save_pending_confirmation(effective_user_jid, {
             "message_id": message_id, "output_path": "", "original_filename": "",
