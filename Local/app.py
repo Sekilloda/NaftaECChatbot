@@ -18,7 +18,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # Core modules
 from core.whatsapp import send_whatsapp_message, send_whatsapp_document, normalize_phone
-from core.knowledge import responder, summarize_history
+from core.knowledge import responder, summarize_history, reset_knowledge_base
 from core.registrations import update_registrations
 from core.database import (
     init_db, save_message, get_last_messages,
@@ -260,6 +260,16 @@ def _process_single_message_container(message_container):
                 reset_user_status(effective_user_jid)
                 send_whatsapp_message(effective_user_jid, "Un representante ha marcado tu consulta como resuelta. El asistente virtual vuelve a estar activo.")
                 return {"status": "admin_resuelto_success", "target": effective_user_jid}, 200
+
+    if incoming_text.lower().startswith("#updatefaqs"):
+        print(f"[ADMIN] Command detected: #updatefaqs | fromMe: {is_from_me} | Sender: {sender}")
+        if is_from_me or is_admin_sender(sender):
+            try:
+                reset_knowledge_base()
+                send_whatsapp_message(sender, "✅ Las FAQs han sido descargadas desde Google Drive y la memoria del bot se ha regenerado exitosamente.")
+            except Exception as e:
+                send_whatsapp_message(sender, f"❌ Error al descargar las FAQs: {e}")
+            return {"status": "admin_updatefaqs_success"}, 200
 
     if incoming_text.lower().startswith("#backup"):
         print(f"[ADMIN] Command detected: #backup | fromMe: {is_from_me} | Sender: {sender}")

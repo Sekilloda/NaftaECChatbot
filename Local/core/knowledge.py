@@ -39,12 +39,45 @@ def call_mistral_chat(prompt, model_id, mistral_key):
     res.raise_for_status()
     return res.json()["choices"][0]["message"]["content"].strip()
 
+FAQ_DRIVE_URL = "https://docs.google.com/spreadsheets/d/1eGpP94CwTY4LlLz3AMZR2NyYp5kF3HHe/export?format=xlsx"
+
+def download_faqs():
+    persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
+    # If not on render (no PERSISTENT_STORAGE_PATH), use the local directory to avoid permission issues
+    faq_path = os.path.join(persistent_dir, "faqs_drive.xlsx") if os.getenv("PERSISTENT_STORAGE_PATH") else os.path.join(base_dir, "faqs_drive.xlsx")
+    try:
+        print(f"[KNOWLEDGE] Descargando FAQs desde Google Drive...")
+        res = requests.get(FAQ_DRIVE_URL, timeout=15)
+        res.raise_for_status()
+        with open(faq_path, "wb") as f:
+            f.write(res.content)
+        print(f"[KNOWLEDGE] FAQs descargadas exitosamente en {faq_path}")
+        return faq_path
+    except Exception as e:
+        print(f"[KNOWLEDGE] Error descargando FAQs: {e}")
+        return None
+
+def reset_knowledge_base():
+    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
+    print("[KNOWLEDGE] Reseteando base de conocimientos...")
+    _EMBEDDINGS = None
+    _FAQS_DF = None
+    _DOCUMENTOS = None
+    download_faqs()
+    _get_knowledge_base()
+    return True
+
 def _get_knowledge_base():
     global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
     
     if _EMBEDDINGS is None:
-        # Ruta absoluta confirmada por consola
-        faq_path = "/app/faqs.xlsx"
+        persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
+        drive_faq_path = os.path.join(persistent_dir, "faqs_drive.xlsx") if os.getenv("PERSISTENT_STORAGE_PATH") else os.path.join(base_dir, "faqs_drive.xlsx")
+        
+        if not os.path.exists(drive_faq_path):
+            download_faqs()
+            
+        faq_path = drive_faq_path if os.path.exists(drive_faq_path) else "/app/faqs.xlsx"
         
         if not os.path.exists(faq_path):
             print(f"[KNOWLEDGE] Warning: {faq_path} not found.")
