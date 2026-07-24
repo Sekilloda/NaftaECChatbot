@@ -25,6 +25,7 @@ GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "models/gemini-embe
 _EMBEDDINGS = None
 _FAQS_DF = None
 _DOCUMENTOS = None
+_PROMPT_TEMPLATE = None
 
 def get_mistral_api_key():
     return os.getenv("MISTRAL_API_KEY") or os.getenv("MISTRAL_API")
@@ -40,6 +41,7 @@ def call_mistral_chat(prompt, model_id, mistral_key):
     return res.json()["choices"][0]["message"]["content"].strip()
 
 FAQ_DRIVE_URL = "https://docs.google.com/spreadsheets/d/1eGpP94CwTY4LlLz3AMZR2NyYp5kF3HHe/export?format=xlsx"
+PROMPT_DRIVE_URL = "https://docs.google.com/document/d/1W5VMpeS7210SBg-KlTtJKkZp_naw-c4OlR6SVEzRaRM/export?format=txt"
 
 def download_faqs():
     persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
@@ -57,19 +59,48 @@ def download_faqs():
         print(f"[KNOWLEDGE] Error descargando FAQs: {e}")
         return None
 
+def download_prompt():
+    persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
+    prompt_path = os.path.join(persistent_dir, "prompt_drive.txt") if os.getenv("PERSISTENT_STORAGE_PATH") else os.path.join(base_dir, "prompt_drive.txt")
+    try:
+        print(f"[KNOWLEDGE] Descargando Prompt desde Google Drive...")
+        res = requests.get(PROMPT_DRIVE_URL, timeout=15)
+        res.raise_for_status()
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            f.write(res.text.strip('\ufeff'))
+        print(f"[KNOWLEDGE] Prompt descargado exitosamente en {prompt_path}")
+        return prompt_path
+    except Exception as e:
+        print(f"[KNOWLEDGE] Error descargando Prompt: {e}")
+        return None
+
 def reset_knowledge_base():
-    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
-    print("[KNOWLEDGE] Reseteando base de conocimientos...")
+    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS, _PROMPT_TEMPLATE
+    print("[KNOWLEDGE] Reseteando base de conocimientos y prompt...")
     _EMBEDDINGS = None
     _FAQS_DF = None
     _DOCUMENTOS = None
+    _PROMPT_TEMPLATE = None
     download_faqs()
+    download_prompt()
     _get_knowledge_base()
     return True
 
 def _get_knowledge_base():
-    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS
+    global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS, _PROMPT_TEMPLATE
     
+    if _PROMPT_TEMPLATE is None:
+        persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
+        drive_prompt_path = os.path.join(persistent_dir, "prompt_drive.txt") if os.getenv("PERSISTENT_STORAGE_PATH") else os.path.join(base_dir, "prompt_drive.txt")
+        if not os.path.exists(drive_prompt_path):
+            download_prompt()
+        if os.path.exists(drive_prompt_path):
+            with open(drive_prompt_path, "r", encoding="utf-8") as f:
+                _PROMPT_TEMPLATE = f.read()
+        else:
+            print("[KNOWLEDGE] Warning: No prompt template available.")
+            _PROMPT_TEMPLATE = ""
+
     if _EMBEDDINGS is None:
         persistent_dir = os.getenv("PERSISTENT_STORAGE_PATH", "/var/lib/naftaec")
         drive_faq_path = os.path.join(persistent_dir, "faqs_drive.xlsx") if os.getenv("PERSISTENT_STORAGE_PATH") else os.path.join(base_dir, "faqs_drive.xlsx")
@@ -195,63 +226,14 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
             history_str += f"{label}: {content}\n"
 
     # --- 5. CONSTRUCCIÓN DEL PROMPT ---
-    prompt = (
-        "Eres el asistente virtual de NaftaEC, una comunidad runner de Ecuador.\n"
-        "Tienes alma de runner: eres muy cálido, entusiasta, simpático y motivador.\n"
-        "Responde siempre en el mismo idioma en el que te hable el usuario (por defecto español), con una actitud súper servicial, haciendo sentir al usuario como un compañero de equipo.\n\n"
-
-        "REGLAS ESTRICTAS:\n"
-        "- NO inventes información. Usa SOLO el contexto proporcionado.\n"
-        "- Si la información no está disponible, dilo claramente pero con mucha amabilidad.\n"
-        "- Incluye links/URLs cuando estén en las FAQs.\n"
-        "- Usa emojis relacionados al deporte y la naturaleza (🏃‍♂️, ⛰️, 🎉, 💪) para darle vida a tus respuestas.\n"
-        "- Sé muy educado y empático. Añade un breve saludo cálido si es el primer mensaje.\n"
-        "- NUNCA incluyas la letra ni el nombre de la categoría en tu respuesta. Responde directamente de forma natural.\n\n"
-
-        "Elige mentalmente UNA de las siguientes categorías y genera SOLO la respuesta final según sus reglas (NO escribas el nombre de la categoría en el mensaje):\n\n"
-
-        "A) SALUDO — saludo o cortesía sin pregunta concreta.\n"
-        "   → Responde con un saludo muy amistoso (ej: ¡Hola! 👋), agradécele por comunicarse con NaftaEC y menciona nuestros próximos eventos (traduce el mensaje si el usuario habla otro idioma):\n"
-        "   🏃‍♂️ Aqua y Fuego Trail – 7 de junio de 2026\n"
-        "   🏔️ Altar Reto Trail – 20 de septiembre de 2026\n"
-        "   🏙️ RIO21K – 22 de noviembre de 2026\n"
-        "   ❄️ Ruta del Hielero – 7 de marzo de 2027\n"
-        "   Finalmente, pregúntale en qué evento está interesado o en qué puedes ayudarle.\n\n"
-
-        "B) PREGUNTA EVENTO — sobre fechas, precios, distancias, kits, rutas.\n"
-        "   → Usa SOLO la información de las FAQs. Incluye links si los hay.\n"
-        "   → Si las FAQs no tienen la info, dilo claramente.\n\n"
-
-        "C) CONSULTA REGISTRO — sobre inscripción, pago, dorsal, estado.\n"
-        "   → Usa SOLO el contexto de registro.\n"
-        "   → Si hay datos: confírmalos al usuario.\n"
-        "   → Sin datos: solicita su número de cédula.\n\n"
-
-        "D) OTRA CONSULTA — cualquier otra pregunta que puedas responder.\n"
-        "   → Responde con info disponible. Sin info confiable → dilo.\n\n"
-
-        "E) NECESITA AYUDA HUMANA — el usuario está frustrado, confundido,\n"
-        "   pide hablar con una persona/asesor/representante, expresa enojo,\n"
-        "   dice que el bot no le ayuda, o insiste sin resolución.\n"
-        "   → Tu respuesta DEBE empezar EXACTAMENTE con el prefijo [HELP]\n"
-        "   seguido de un mensaje empático ofreciendo contactar a un representante.\n"
-        "   Ejemplo: [HELP] Entiendo tu frustración. ¿Te gustaría que te ponga\n"
-        "   en contacto con un representante que pueda ayudarte directamente?\n\n"
-        
-        "F) DESPEDIDA / SATISFACCIÓN — el usuario agradece, se despide,\n"
-        "   o indica que ya resolvió su duda (ej. 'gracias', 'todo claro', 'perfecto').\n"
-        "   → Responde cordialmente despidiéndote en nombre de NaftaEC.\n"
-        "   → Ejemplo: '¡Fue un gusto atenderte desde NaftaEC! 🏃‍♂️ Si tienes alguna otra duda en el futuro, aquí estaremos. ¡Que tengas un excelente día!'\n\n"
-
-        "CONTEXTO DISPONIBLE:\n"
-        f"{faq_context[:1500]}\n"
-        f"{history_str}\n"
-        "--- CONTEXTO DE REGISTRO ---\n"
-        f"{registration_context}\n"
-        "---\n\n"
-
-        f"MENSAJE DEL USUARIO: {pregunta}"
-    )
+    if not _PROMPT_TEMPLATE:
+        print("[KNOWLEDGE] Warning: Fallback a prompt vacío.")
+        prompt = f"{faq_context}\n{history_str}\n{registration_context}\nMENSAJE: {pregunta}"
+    else:
+        prompt = _PROMPT_TEMPLATE.replace("[FAQ_CONTEXT]", faq_context[:1500])\
+                                 .replace("[HISTORY]", history_str)\
+                                 .replace("[REGISTRATION_CONTEXT]", registration_context)\
+                                 .replace("[USER_MESSAGE]", pregunta)
     # --- 6. GENERACIÓN DE RESPUESTA CON GEMINI ---
     try:
         if client:
