@@ -3,203 +3,198 @@ import re
 import threading
 import time
 import pandas as pd
-import requests
-
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
+import subprocess
+import glob
+import shutil
 
 REGISTRATIONS_DF = None
 REGISTRATIONS_LOCK = threading.Lock()
 
 # Configuration
-NJUKO_API_URL = os.getenv("NJUKO_API_URL", "https://api.njuko.com/profile-definition/export-public/695ed6b584a40eb05b4dc18f/UXM38196655")
-SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", 300))  # 5 minutes
-# Support for persistent storage on Render
+GDRIVE_FOLDER_URL = os.getenv("GDRIVE_FOLDER_URL", "https://drive.google.com/drive/u/0/folders/1cCOv0vqOkXhHcTWd0AQmSaqZ752g9kgt")
+SYNC_INTERVAL = int(os.getenv("SYNC_INTERVAL", 300))  # 5 minutes by default
+
 _DEFAULT_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BASE_DIR = os.getenv("PERSISTENT_STORAGE_PATH", _DEFAULT_DATA_DIR)
-REPORT_DIR = os.path.join(_BASE_DIR, "reportes_descargados")
+REPORT_DIR = os.path.join(_BASE_DIR, "gdrive_sync")
 
 def normalize_phone(phone):
     """Strips all non-digit characters and returns the full string of digits."""
-    if not phone:
+    if pd.isna(phone) or not phone:
         return ""
     return "".join(filter(str.isdigit, str(phone)))
 
-def download_report_logic():
+def download_gdrive_folder():
+    """Uses gdown to sync the public Google Drive folder locally."""
     if not os.path.exists(REPORT_DIR):
         os.makedirs(REPORT_DIR, exist_ok=True)
+    
+    print(f"[REGISTRATIONS] Descargando/Sincronizando carpeta de Google Drive...")
+    try:
+        # Run gdown --folder <URL> -O <DIR>
+        result = subprocess.run(
+            ["gdown", "--folder", GDRIVE_FOLDER_URL, "-O", REPORT_DIR],
+            capture_output=True, text=True, check=True
+        )
+        print("[REGISTRATIONS] Descarga completada exitosamente.")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"[REGISTRATIONS] Error descargando con gdown: {e.stderr}")
+        return False
+    except Exception as e:
+        print(f"[REGISTRATIONS] Excepción inesperada al descargar: {e}")
+        return False
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+def read_file_safely(file_path):
+    """Reads a CSV or Excel file safely, handling encoding errors."""
+    ext = file_path.lower().split('.')[-1]
+    
+    # Try reading headers first to map types (force IDs to strings)
+    if ext == 'xlsx':
+        try:
+            peek = pd.read_excel(file_path, nrows=0)
+            dtypes = {col: str for col in peek.columns if 'cédula' in col.lower() or 'teléfono' in col.lower() or 'cedula' in col.lower()}
+            return pd.read_excel(file_path, dtype=dtypes)
+        except Exception as e:
+            print(f"Error reading excel {file_path}: {e}")
+            return None
+    elif ext == 'csv':
+        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+        for enc in encodings:
+            try:
+                # Read 1 line to get columns
+                peek = pd.read_csv(file_path, encoding=enc, nrows=0)
+                dtypes = {col: str for col in peek.columns if 'cédula' in col.lower() or 'teléfono' in col.lower() or 'cedula' in col.lower()}
+                
+                df = pd.read_csv(file_path, encoding=enc, dtype=dtypes)
+                return df
+            except UnicodeDecodeError:
+                continue
+            except Exception as e:
+                print(f"Error reading csv {file_path} with {enc}: {e}")
+                return None
+        print(f"Failed to read {file_path} with all attempted encodings.")
+        return None
+    return None
+
+def process_and_combine_dataframes(dataframes):
+    """Unifies multiple dataframes and extracts the standardized columns."""
+    if not dataframes:
+        return None
+    
+    combined_df = pd.concat(dataframes, ignore_index=True)
+    if combined_df.empty:
+        return combined_df
+
+    # Normalize column names for flexible detection
+    cols_lower = {c.lower().strip(): c for c in combined_df.columns}
+
+    # Find Phone Column
+    phone_col = (
+        cols_lower.get('número de teléfono-(asistente)') or 
+        cols_lower.get('telefono') or 
+        cols_lower.get('phone') or 
+        'Telefono'
+    )
+    if phone_col in combined_df.columns:
+        combined_df['norm_phone'] = combined_df[phone_col].apply(normalize_phone)
+
+    # Find Name Columns
+    f_col = (
+        cols_lower.get('nombres-(asistente)') or 
+        cols_lower.get('first name') or 
+        cols_lower.get('nombre') or 
+        'First name'
+    )
+    l_col = (
+        cols_lower.get('apellidos-(asistente)') or 
+        cols_lower.get('last name') or 
+        cols_lower.get('apellido') or 
+        'Last name'
+    )
+
+    if f_col in combined_df.columns and l_col in combined_df.columns:
+        combined_df['full_name'] = (combined_df[f_col].fillna('') + ' ' + combined_df[l_col].fillna('')).str.lower().str.strip()
+        combined_df['full_name_rev'] = (combined_df[l_col].fillna('') + ' ' + combined_df[f_col].fillna('')).str.lower().str.strip()
+    elif f_col in combined_df.columns:
+        combined_df['full_name'] = combined_df[f_col].fillna('').str.lower().str.strip()
+        combined_df['full_name_rev'] = combined_df['full_name']
+
+    # Find Cedula Column
+    id_col = (
+        cols_lower.get('número de cédula-(asistente)') or 
+        cols_lower.get('cedula') or 
+        cols_lower.get('documento') or 
+        'Cedula'
+    )
+    if id_col in combined_df.columns:
+        def clean_id(x):
+            if pd.isna(x): return ""
+            s = str(x).strip()
+            if '.0' in s: s = s.split('.')[0]
+            return re.sub(r'\D', '', s)
+        combined_df['norm_cedula'] = combined_df[id_col].apply(clean_id)
+
+    # Find Race/Competition Column
+    race_col = (
+        cols_lower.get('localidad') or 
+        cols_lower.get('competition') or 
+        cols_lower.get('carrera') or 
+        'Competition'
+    )
+
+    combined_df.attrs['mapped_cols'] = {
+        'first_name': f_col,
+        'last_name': l_col,
+        'phone': phone_col,
+        'cedula': id_col,
+        'competition': race_col,
+        'status': cols_lower.get('status') or 'Status' # Fake column if it doesn't exist
     }
 
-    try:
-        print(f"[REGISTRATIONS] Fetching export metadata from {NJUKO_API_URL}")
-        resp = requests.get(NJUKO_API_URL, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        s3_url = data.get("file")
-        filename = data.get("filename", "njuko_export.xlsx")
-        num_results = data.get("numberOfResults", "unknown")
-        
-        if not s3_url:
-            print("[REGISTRATIONS] No file URL found in API response.")
-            return False
-
-        print(f"[REGISTRATIONS] Downloading registry file: {filename} (Results: {num_results})")
-        report_resp = requests.get(s3_url, headers=headers, timeout=60)
-        report_resp.raise_for_status()
-        
-        filepath = os.path.join(REPORT_DIR, "latest_registry.xlsx")
-        with open(filepath, 'wb') as f:
-            f.write(report_resp.content)
-        
-        print(f"[REGISTRATIONS] Registry downloaded successfully to {filepath}")
-        return True
-    except Exception as e:
-        print(f"[REGISTRATIONS] Error downloading registry: {e}")
-        return False
+    return combined_df
 
 def update_registrations():
     global REGISTRATIONS_DF
-    print(f"[REGISTRATIONS] Starting background update thread (PID: {os.getpid()})...")
-    
-    lock_path = os.path.join(REPORT_DIR, "download.lock")
-    filepath = os.path.join(REPORT_DIR, "latest_registry.xlsx")
-    last_loaded_mtime = None
-    
-    if not os.path.exists(REPORT_DIR):
-        os.makedirs(REPORT_DIR, exist_ok=True)
+    print(f"[REGISTRATIONS] Iniciando hilo de sincronización de Google Drive (PID: {os.getpid()})...")
 
     while True:
         try:
-            # 1. Freshness check: If file exists and is < (SYNC_INTERVAL - 60) old, skip download
-            needs_download = True
-            if os.path.exists(filepath):
-                if (time.time() - os.path.getmtime(filepath)) < (SYNC_INTERVAL - 60):
-                    needs_download = False
-
-            if needs_download:
-                # 2. File-based lock to prevent multiple workers downloading simultaneously
-                if fcntl:
-                    with open(lock_path, 'w') as f_lock:
-                        try:
-                            fcntl.flock(f_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                            download_report_logic()
-                        except (BlockingIOError, OSError):
-                            pass
+            # 1. Download/sync the folder
+            success = download_gdrive_folder()
+            
+            if success and os.path.exists(REPORT_DIR):
+                # 2. Gather all excel and csv files
+                all_files = glob.glob(os.path.join(REPORT_DIR, "*.csv")) + glob.glob(os.path.join(REPORT_DIR, "*.xlsx"))
+                
+                if not all_files:
+                    print(f"[REGISTRATIONS] No se encontraron archivos CSV o Excel en la carpeta descargada.")
                 else:
-                    download_report_logic()
-
-            # 3. Load the latest local file into memory
-            if os.path.exists(filepath):
-                file_mtime = os.path.getmtime(filepath)
-                if last_loaded_mtime is None or file_mtime != last_loaded_mtime or REGISTRATIONS_DF is None:
-                    try:
-                        # Peek at columns to build dtype map
-                        peek_df = pd.read_excel(filepath, nrows=0)
-                        dtype_map = {col: str for col in peek_df.columns if any(x in col.lower() for x in ['cedula', 'document', 'id', 'telefono', 'phone', 'celular'])}
-                        
-                        new_df = pd.read_excel(filepath, dtype=dtype_map)
-                        
-                        # Post-processing for columns that might have been read as float-strings (like "1.23e+10")
-                        for col in new_df.columns:
-                            if any(x in col.lower() for x in ['cedula', 'document', 'id']):
-                                # Clean scientific notation if it exists
-                                def clean_id(x):
-                                    if pd.isna(x): return ""
-                                    s = str(x).strip()
-                                    if '.0' in s: s = s.split('.')[0]
-                                    if 'e+' in s.lower():
-                                        try:
-                                            s = "{:.0f}".format(float(s))
-                                        except: pass
-                                    return s
-                                new_df[col] = new_df[col].apply(clean_id)
-                    except Exception as e:
-                        print(f"[REGISTRATIONS] Robust load failed: {e}")
-                        new_df = pd.read_excel(filepath)
+                    dataframes = []
+                    for f in all_files:
+                        df = read_file_safely(f)
+                        if df is not None and not df.empty:
+                            dataframes.append(df)
                     
-                    if new_df.empty:
-                        print("[REGISTRATIONS] Warning: Downloaded registry is empty. Keeping old data.")
-                    else:
-                        # Normalize column names for flexible detection
-                        cols_lower = {c.lower().strip(): c for c in new_df.columns}
-                        
-                        # Find Phone Column
-                        phone_col = (
-                            cols_lower.get('telefono') or 
-                            cols_lower.get('phone') or 
-                            cols_lower.get('celular') or 
-                            cols_lower.get('mobile') or
-                            'Telefono'
-                        )
-                        if phone_col in new_df.columns:
-                            new_df['norm_phone'] = new_df[phone_col].apply(normalize_phone)
-                        
-                        # Find Name Columns
-                        f_col = (
-                            cols_lower.get('first name') or 
-                            cols_lower.get('nombre') or 
-                            cols_lower.get('first_name') or
-                            'First name'
-                        )
-                        l_col = (
-                            cols_lower.get('last name') or 
-                            cols_lower.get('apellido') or 
-                            cols_lower.get('last_name') or
-                            'Last name'
-                        )
-                        
-                        if f_col in new_df.columns and l_col in new_df.columns:
-                            new_df['full_name'] = (new_df[f_col].fillna('') + ' ' + new_df[l_col].fillna('')).str.lower().str.strip()
-                            new_df['full_name_rev'] = (new_df[l_col].fillna('') + ' ' + new_df[f_col].fillna('')).str.lower().str.strip()
-                        elif f_col in new_df.columns: # Sometimes it's just one name column
-                             new_df['full_name'] = new_df[f_col].fillna('').str.lower().str.strip()
-                             new_df['full_name_rev'] = new_df['full_name']
-                        
-                        # Find Cedula Column
-                        id_col = (
-                            cols_lower.get('cedula') or 
-                            cols_lower.get('documento') or 
-                            cols_lower.get('id_document') or 
-                            cols_lower.get('document_id') or
-                            'Cedula'
-                        )
-                        if id_col in new_df.columns:
-                            new_df['norm_cedula'] = new_df[id_col].astype(str).str.replace(r'\D', '', regex=True)
-
-                        # Store identified columns for formatting
-                        new_df.attrs['mapped_cols'] = {
-                            'first_name': f_col,
-                            'last_name': l_col,
-                            'phone': phone_col,
-                            'competition': cols_lower.get('competition') or cols_lower.get('carrera') or cols_lower.get('race') or 'Competition',
-                            'cedula': id_col,
-                            'status': cols_lower.get('status') or cols_lower.get('estado') or 'Status'
-                        }
-                        
+                    if dataframes:
+                        combined_df = process_and_combine_dataframes(dataframes)
                         with REGISTRATIONS_LOCK:
-                            REGISTRATIONS_DF = new_df
-                        last_loaded_mtime = file_mtime
-                        print(f"[REGISTRATIONS] Loaded {len(new_df)} registrations. (Columns mapped: {new_df.attrs['mapped_cols']})")
-            else:
-                print("[REGISTRATIONS] No local registry file found to load.")
+                            REGISTRATIONS_DF = combined_df
+                        print(f"[REGISTRATIONS] Base de datos actualizada. Total inscritos: {len(combined_df)} de {len(dataframes)} archivo(s).")
+                    else:
+                        print(f"[REGISTRATIONS] No se pudo leer correctamente ningún archivo.")
 
         except Exception as e:
-            print(f"[REGISTRATIONS] Error in background update: {e}")
+            print(f"[REGISTRATIONS] Error general en el hilo de actualización: {e}")
         
-        time.sleep(60) # Wake up every minute to check freshness
+        # Esperar antes de la próxima sincronización
+        time.sleep(SYNC_INTERVAL)
 
 def format_user_data(row_or_df):
     """Helper to turn one or more dataframe rows into a readable string."""
     if row_or_df is None or (isinstance(row_or_df, pd.DataFrame) and row_or_df.empty):
         return None
 
-    # Attempt to get mapped columns
     mapped = {}
     if REGISTRATIONS_DF is not None and hasattr(REGISTRATIONS_DF, 'attrs'):
         mapped = REGISTRATIONS_DF.attrs.get('mapped_cols', {})
@@ -208,14 +203,20 @@ def format_user_data(row_or_df):
     l_col = mapped.get('last_name', 'Last name')
     race_col = mapped.get('competition', 'Competition')
     id_col = mapped.get('cedula', 'Cedula')
-    status_col = mapped.get('status', 'Status')
 
     def row_to_str(row):
-        f_name = row.get(f_col) or row.get('First name') or ""
-        l_name = row.get(l_col) or row.get('Last name') or ""
-        race = row.get(race_col) or row.get('Competition') or "N/A"
-        cedula = row.get(id_col) or row.get('Cedula') or "N/A"
-        status = row.get(status_col) or "Confirmado"
+        f_name = row.get(f_col, "")
+        if pd.isna(f_name): f_name = ""
+        l_name = row.get(l_col, "")
+        if pd.isna(l_name): l_name = ""
+        
+        race = row.get(race_col, "N/A")
+        if pd.isna(race): race = "N/A"
+        
+        cedula = row.get(id_col, "N/A")
+        if pd.isna(cedula): cedula = "N/A"
+        
+        status = "Confirmado"
         return f"Registro: {f_name} {l_name} | Carrera: {race} | Cédula: {cedula} | Estado: {status}"
 
     if isinstance(row_or_df, pd.Series):
@@ -236,13 +237,10 @@ def get_user_registration_info(sender_jid):
     if not user_phone:
         return None
     
-    # We use a suffix check (last 9 digits) for more robust matching 
-    # since registration phones might or might not have +593
     user_suffix = user_phone[-9:] if len(user_phone) >= 9 else user_phone
 
     with REGISTRATIONS_LOCK:
         if 'norm_phone' in REGISTRATIONS_DF.columns:
-            # Vectorized suffix match
             matches = REGISTRATIONS_DF[REGISTRATIONS_DF['norm_phone'].str.endswith(user_suffix, na=False)]
             if not matches.empty:
                 return format_user_data(matches)
@@ -265,20 +263,16 @@ def search_registrations_by_cedula(cedula_query):
     return None
 
 def search_user_by_name(name_query):
-    """
-    Checks registration by name.
-    Now more conservative to prevent hallucinations.
-    """
+    """Checks registration by name."""
     if REGISTRATIONS_DF is None:
         return None
     
     query = name_query.lower().strip()
-    if len(query) < 4: # Too short for a name search
+    if len(query) < 4:
         return None
 
     with REGISTRATIONS_LOCK:
         if 'full_name' in REGISTRATIONS_DF.columns:
-            # Try exact match first
             exact_matches = REGISTRATIONS_DF[
                 (REGISTRATIONS_DF['full_name'] == query) | 
                 (REGISTRATIONS_DF['full_name_rev'] == query)
@@ -286,13 +280,11 @@ def search_user_by_name(name_query):
             if not exact_matches.empty:
                 return format_user_data(exact_matches)
             
-            # If no exact match, try contains but only if query is long enough
             if len(query) >= 8:
                 partial_matches = REGISTRATIONS_DF[
                     REGISTRATIONS_DF['full_name'].str.contains(query, na=False)
                 ]
                 if not partial_matches.empty:
-                    # Limit to top 3 to avoid spamming
                     return format_user_data(partial_matches.head(3))
                     
     return None
