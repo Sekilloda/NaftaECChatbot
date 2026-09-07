@@ -132,7 +132,7 @@ def process_and_combine_dataframes(dataframes):
             if pd.isna(x): return ""
             s = str(x).strip()
             if '.0' in s: s = s.split('.')[0]
-            return re.sub(r'\D', '', s)
+            return re.sub(r'\D', '', s).lstrip('0')
         combined_df['norm_cedula'] = combined_df[id_col].apply(clean_id)
 
     # Find Race/Competition Column
@@ -251,7 +251,7 @@ def search_registrations_by_cedula(cedula_query):
     if REGISTRATIONS_DF is None:
         return None
     
-    clean_cedula = re.sub(r'\D', '', str(cedula_query))
+    clean_cedula = re.sub(r'\D', '', str(cedula_query)).lstrip('0')
     if not clean_cedula:
         return None
 
@@ -280,10 +280,14 @@ def search_user_by_name(name_query):
             if not exact_matches.empty:
                 return format_user_data(exact_matches)
             
-            if len(query) >= 8:
-                partial_matches = REGISTRATIONS_DF[
-                    REGISTRATIONS_DF['full_name'].str.contains(query, na=False)
-                ]
+            if len(query) >= 4:
+                query_parts = query.split()
+                mask = pd.Series([True] * len(REGISTRATIONS_DF), index=REGISTRATIONS_DF.index)
+                for part in query_parts:
+                    if len(part) > 2:
+                        mask &= REGISTRATIONS_DF['full_name'].str.contains(part, na=False)
+                
+                partial_matches = REGISTRATIONS_DF[mask]
                 if not partial_matches.empty:
                     return format_user_data(partial_matches.head(3))
                     
