@@ -168,9 +168,7 @@ def responder(pregunta, sender_jid=None, history=None, k=2):
         name_match = re.search(r"(?i)(?:soy|me llamo|mi nombre es|habla|inscripción de)\s+([a-záéíóúüñ\s]{4,40})", pregunta)
         if name_match:
             potential_name = name_match.group(1).strip()
-            registration_info = search_user_by_name(potential_name)
-            if registration_info:
-                registration_info = f"[COINCIDENCIA POR NOMBRE '{potential_name}']:\n{registration_info}"
+            return f'Hola, si {potential_name}, por favor dame tu número de cédula para verificar.'
 
     registration_context = "NO se encontró información de registro para este usuario."
     if registration_info:
