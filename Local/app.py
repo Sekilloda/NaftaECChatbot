@@ -18,7 +18,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 # Core modules
 from core.whatsapp import send_whatsapp_message, send_whatsapp_document, normalize_phone
-from core.knowledge import responder, summarize_history, reset_knowledge_base
+from core.knowledge import responder, summarize_history, reset_knowledge_base, reset_prompt
 from core.registrations import update_registrations
 from core.database import (
     init_db, save_message, get_last_messages,
@@ -270,6 +270,16 @@ def _process_single_message_container(message_container):
             except Exception as e:
                 send_whatsapp_message(sender, f"❌ Error al descargar las FAQs: {e}")
             return {"status": "admin_updatefaqs_success"}, 200
+
+    if incoming_text.lower().startswith("#updateprompt"):
+        print(f"[ADMIN] Command detected: #updateprompt | fromMe: {is_from_me} | Sender: {sender}")
+        if is_from_me or is_admin_sender(sender):
+            try:
+                reset_prompt()
+                send_whatsapp_message(sender, "✅ El Prompt ha sido descargado desde Google Drive y actualizado exitosamente.")
+            except Exception as e:
+                send_whatsapp_message(sender, f"❌ Error al descargar el Prompt: {e}")
+            return {"status": "admin_updateprompt_success"}, 200
 
     if incoming_text.lower().startswith("#backup"):
         print(f"[ADMIN] Command detected: #backup | fromMe: {is_from_me} | Sender: {sender}")

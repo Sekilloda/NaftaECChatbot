@@ -86,6 +86,14 @@ def reset_knowledge_base():
     _get_knowledge_base()
     return True
 
+def reset_prompt():
+    global _PROMPT_TEMPLATE
+    print("[KNOWLEDGE] Reseteando prompt...")
+    _PROMPT_TEMPLATE = None
+    download_prompt()
+    _get_knowledge_base()
+    return True
+
 def _get_knowledge_base():
     global _EMBEDDINGS, _FAQS_DF, _DOCUMENTOS, _PROMPT_TEMPLATE
     
